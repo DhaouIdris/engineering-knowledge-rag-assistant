@@ -1,0 +1,13 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.faiss
+*.pkl
+.pytest_cache/
+.coverage
+htmlcov/
+storage/
+evaluations/results/
+data/documents/*.pdf

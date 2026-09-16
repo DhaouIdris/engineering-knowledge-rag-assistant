@@ -1,0 +1,334 @@
+{
+  "dataset_name": "automobile_engineering_rag_eval_v1",
+  "version": "1.0.0",
+  "language": "en",
+  "source_document": {
+    "filename": "dokumen.pub_a-textbook-of-automobile-engineering-2nbsped-9781944131296-1944131299.pdf",
+    "title": "Automobile Engineering",
+    "author": "Sudhir Kumar Saxena",
+    "total_pdf_pages": 334
+  },
+  "retrieval_relevance_policy": {
+    "description": "A retrieved chunk is relevant when its source document matches and its zero-based loader page index is listed in relevant_sources. This keeps the ground truth stable when chunk size or overlap changes.",
+    "page_numbering": "pdf_page_number is one-based for humans; loader_page_index is zero-based for PyPDFLoader-style metadata; printed_page is the page number printed in the textbook.",
+    "primary_metric_note": "For questions whose answer spans several pages, use Recall@K over the listed relevant pages and Hit@K for the presence of at least one relevant page."
+  },
+  "examples": [
+    {
+      "id": "ae_001",
+      "question": "What are the four strokes of a four-stroke petrol engine, and how many crankshaft revolutions complete one cycle?",
+      "expected_answer": "The four strokes are suction (intake), compression, expansion (power), and exhaust. One complete cycle takes two crankshaft revolutions.",
+      "expected_answer_facts": [
+        "suction or intake stroke",
+        "compression stroke",
+        "expansion or power stroke",
+        "exhaust stroke",
+        "two crankshaft revolutions"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 36,
+          "loader_page_index": 35,
+          "printed_page": 20,
+          "section": "2.3 Working of Four-Stroke Petrol Engine"
+        },
+        {
+          "pdf_page_number": 37,
+          "loader_page_index": 36,
+          "printed_page": 21,
+          "section": "2.3.3 Expansion Stroke and 2.3.4 Exhaust Stroke"
+        }
+      ],
+      "evidence_terms": [
+        "four strokes",
+        "two revolutions of crankshaft",
+        "Suction Stroke",
+        "Compression Stroke",
+        "Expansion Stroke",
+        "Exhaust Stroke"
+      ],
+      "difficulty": "easy",
+      "answerable": true
+    },
+    {
+      "id": "ae_002",
+      "question": "In a CRDI diesel engine, how is high-pressure fuel supplied to the injectors, and what controls injection timing and fuel quantity?",
+      "expected_answer": "A separate pump keeps fuel at high pressure in a shared common rail, which supplies each injector through connecting pipes. A solenoid valve at each injector regulates injection timing and fuel quantity from electronic control module inputs.",
+      "expected_answer_facts": [
+        "separate high-pressure pump",
+        "shared common rail reservoir",
+        "pipes or connectors feed each injector",
+        "injector solenoid valve",
+        "electronic control module controls timing and quantity"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 48,
+          "loader_page_index": 47,
+          "printed_page": 32,
+          "section": "3.3 Common Rail Direct Injection System - Working Principle"
+        },
+        {
+          "pdf_page_number": 49,
+          "loader_page_index": 48,
+          "printed_page": 33,
+          "section": "3.3 Common Rail Direct Injection System - ECM and Pilot Injection"
+        }
+      ],
+      "evidence_terms": [
+        "shared reservoir",
+        "1500bar",
+        "solenoid valve",
+        "injection timing",
+        "amount of fuel",
+        "electronic control module"
+      ],
+      "difficulty": "medium",
+      "answerable": true
+    },
+    {
+      "id": "ae_003",
+      "question": "Why must engine lubricating oil have a suitable viscosity rather than a viscosity that is very low or very high?",
+      "expected_answer": "Oil with very low viscosity is too thin to maintain a lubricating film between contacting surfaces. Oil with very high viscosity forms a film that itself resists motion and increases friction, so a suitable intermediate viscosity is required.",
+      "expected_answer_facts": [
+        "low viscosity oil is too thin",
+        "low viscosity cannot form an adequate film",
+        "high viscosity resists motion",
+        "high viscosity increases friction"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 84,
+          "loader_page_index": 83,
+          "printed_page": 68,
+          "section": "6.6.1 Viscosity"
+        },
+        {
+          "pdf_page_number": 85,
+          "loader_page_index": 84,
+          "printed_page": 69,
+          "section": "6.6.1 Viscosity"
+        }
+      ],
+      "evidence_terms": [
+        "incapable of forming the film",
+        "produce resistance",
+        "suitable viscosity"
+      ],
+      "difficulty": "medium",
+      "answerable": true
+    },
+    {
+      "id": "ae_004",
+      "question": "How does a friction clutch gradually transfer rotary motion from a driving shaft to a driven shaft?",
+      "expected_answer": "Rough discs attached to the driving and driven shafts are pressed together. Contact creates friction, and increasing the pressure increases the frictional force, causing the driven disc and shaft to accelerate until both shafts rotate at nearly the same speed.",
+      "expected_answer_facts": [
+        "rough disc surfaces are brought into contact",
+        "friction transfers motion",
+        "pressure increases frictional force",
+        "driven shaft speed rises gradually"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 96,
+          "loader_page_index": 95,
+          "printed_page": 80,
+          "section": "9.1 Principle of Friction Clutch"
+        }
+      ],
+      "evidence_terms": [
+        "pressed together",
+        "frictional force",
+        "transfer of motion",
+        "driven shaft"
+      ],
+      "difficulty": "easy",
+      "answerable": true
+    },
+    {
+      "id": "ae_005",
+      "question": "What are the three main elements of the torque converter described in the textbook, and how is each connected?",
+      "expected_answer": "The three elements are the driving element or impeller connected to the engine shaft, the driven member or rotor connected to the driven or propeller shaft, and the fixed reaction member connected to the frame.",
+      "expected_answer_facts": [
+        "impeller connected to engine shaft",
+        "rotor connected to driven or propeller shaft",
+        "reaction member fixed to frame"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 125,
+          "loader_page_index": 124,
+          "printed_page": 109,
+          "section": "10.11 Torque Converter"
+        }
+      ],
+      "evidence_terms": [
+        "Driving element or impeller",
+        "driven member or rotor",
+        "fixed element or reaction member"
+      ],
+      "difficulty": "easy",
+      "answerable": true
+    },
+    {
+      "id": "ae_006",
+      "question": "According to the textbook, what three contributions make up a vehicle's stopping distance?",
+      "expected_answer": "Stopping distance includes the distance traveled during the driver's reaction time, the distance traveled while the brake mechanism responds after the pedal is pressed, and the distance required to stop due to the vehicle's speed.",
+      "expected_answer_facts": [
+        "distance during driver reaction time",
+        "distance during brake mechanism response time",
+        "distance associated with vehicle speed"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 154,
+          "loader_page_index": 153,
+          "printed_page": 138,
+          "section": "13.3 Brake Efficiency and Stopping Distance"
+        }
+      ],
+      "evidence_terms": [
+        "reaction time",
+        "brake pedal is pressed",
+        "brakes are actually applied",
+        "speed",
+        "stopping distance"
+      ],
+      "difficulty": "medium",
+      "answerable": true
+    },
+    {
+      "id": "ae_007",
+      "question": "Why is a four-channel antilock braking system described as the most effective configuration, and what does the main accumulator do?",
+      "expected_answer": "A four-channel ABS has an independent hydraulic circuit and a separate speed sensor for each wheel, so braking can be controlled wheel by wheel. The main accumulator stores brake fluid, maintains high system pressure, and supplies pressure for power-assisted braking; nitrogen and brake fluid are separated by a diaphragm.",
+      "expected_answer_facts": [
+        "independent circuit for each wheel",
+        "separate sensor for each wheel",
+        "wheel-by-wheel controlled braking",
+        "accumulator stores fluid",
+        "accumulator maintains high pressure",
+        "accumulator supports power-assisted brakes"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 170,
+          "loader_page_index": 169,
+          "printed_page": 154,
+          "section": "14.3 Components of Antilock Brake System"
+        }
+      ],
+      "evidence_terms": [
+        "four channel system",
+        "independent circuits",
+        "separate sensors",
+        "stores fluid",
+        "maintains high pressure",
+        "power-assisted brakes"
+      ],
+      "difficulty": "hard",
+      "answerable": true
+    },
+    {
+      "id": "ae_008",
+      "question": "What geometric condition is required for correct steering without tyre slip, and how do the inner and outer front-wheel steering angles compare?",
+      "expected_answer": "The axes of the two front stub axles and the rear-wheel axis must intersect at one instantaneous center of rotation. During a turn, the inner front wheel must turn through a larger angle than the outer front wheel, so theta is greater than phi.",
+      "expected_answer_facts": [
+        "front stub-axle axes and rear-wheel axis intersect at one point",
+        "that point is the instantaneous center",
+        "inner wheel angle is larger than outer wheel angle",
+        "theta is greater than phi"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 184,
+          "loader_page_index": 183,
+          "printed_page": 168,
+          "section": "15.5 Correct Steering"
+        },
+        {
+          "pdf_page_number": 185,
+          "loader_page_index": 184,
+          "printed_page": 169,
+          "section": "15.5 Correct Steering"
+        }
+      ],
+      "evidence_terms": [
+        "instantaneous centre",
+        "without slipping",
+        "inner front wheel",
+        "larger angle",
+        "theta",
+        "phi"
+      ],
+      "difficulty": "hard",
+      "answerable": true
+    },
+    {
+      "id": "ae_009",
+      "question": "Which operating variables are monitored by an adaptive suspension, and how are those measurements used?",
+      "expected_answer": "Sensors monitor vehicle height, speed, steering angle, braking force, throttle position, ignition state, damper status, and even door position. A computer analyzes these inputs and switches the suspension to the desired operating mode, using variable electronic dampers and variable-rate air springs.",
+      "expected_answer_facts": [
+        "vehicle height",
+        "vehicle speed",
+        "steering angle",
+        "braking force",
+        "throttle position",
+        "ignition state",
+        "damper status",
+        "door position",
+        "computer selects operating mode"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 217,
+          "loader_page_index": 216,
+          "printed_page": 201,
+          "section": "16.16 Adaptive Suspensions"
+        },
+        {
+          "pdf_page_number": 218,
+          "loader_page_index": 217,
+          "printed_page": 202,
+          "section": "16.16 Adaptive Suspensions"
+        }
+      ],
+      "evidence_terms": [
+        "vehicle height",
+        "steering angle",
+        "throttle position",
+        "dampers status",
+        "door position",
+        "desired operating mode"
+      ],
+      "difficulty": "medium",
+      "answerable": true
+    },
+    {
+      "id": "ae_010",
+      "question": "Why must a blown automotive fuse be replaced with another fuse of the same current rating?",
+      "expected_answer": "A lower-rated fuse may blow during normal current flow, while a higher-rated fuse may fail to interrupt an excessive current and allow other circuit components to be damaged. The replacement must therefore have the same maximum current rating.",
+      "expected_answer_facts": [
+        "lower rating may blow under normal current",
+        "higher rating may not blow during excessive current",
+        "higher rating can allow component damage",
+        "replacement must use the same rating"
+      ],
+      "relevant_sources": [
+        {
+          "pdf_page_number": 234,
+          "loader_page_index": 233,
+          "printed_page": 218,
+          "section": "18.2.1 Fuse"
+        }
+      ],
+      "evidence_terms": [
+        "same rating",
+        "lower rating",
+        "higher rating",
+        "components of the circuit would be damaged"
+      ],
+      "difficulty": "easy",
+      "answerable": true
+    }
+  ]
+}

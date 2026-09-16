@@ -1,0 +1,24 @@
+version: "3.9"
+services:
+  rag-assistant:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+    env_file: .env
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_BASE_URL=http://0.0.0.0:11434
+
+volumes:
+  ollama_data:
