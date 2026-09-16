@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import List
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader, PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 from app.core.config import settings
@@ -18,8 +18,20 @@ def load_documents(folder_path: str = None) -> List[Document]:
     docs = []
     for pdf in pdf_files:
         logger.info(f"Loading: {pdf.name}")
-        loader = PyPDFLoader(str(pdf))
-        docs.extend(loader.load())
+        try:
+            docs.extend(PyPDFLoader(str(pdf)).load())
+        except Exception as error:
+            logger.warning(
+                "pypdf could not parse %s (%s). Retrying with PyMuPDF.",
+                pdf.name,
+                error,
+            )
+            try:
+                docs.extend(PyMuPDFLoader(str(pdf)).load())
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    f"Both pypdf and PyMuPDF failed to parse {pdf.name}."
+                ) from fallback_error
     
     logger.info(f"Loaded {len(docs)} pages from {len(pdf_files)} PDFs")
     return docs
