@@ -109,8 +109,9 @@ open-source question count is 150.
 
 ### Run the FinanceBench retrieval benchmark
 
-Start with 10 questions to verify the complete pipeline while keeping the first
-run short:
+Start with 10 questions to verify the complete pipeline. The evaluation phase
+will be short, but the first run still indexes the complete PDF corpus so the
+retrieval conditions remain realistic:
 
 ```powershell
 python .\scripts\evaluate_financebench_retrieval.py --limit 10

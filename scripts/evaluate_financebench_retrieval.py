@@ -66,7 +66,7 @@ def cache_path(cache_dir: Path, model: str, chunk_size: int, chunk_overlap: int)
 
 def load_or_build_store(
     *,
-    pages: list[Any],
+    pages: list[Any] | None,
     embeddings: Any,
     model: str,
     pdf_dir: Path,
@@ -74,7 +74,7 @@ def load_or_build_store(
     chunk_size: int,
     chunk_overlap: int,
     rebuild: bool,
-) -> tuple[FAISS, bool, int]:
+) -> tuple[FAISS, bool, int, list[Any] | None]:
     target = cache_path(cache_dir, model, chunk_size, chunk_overlap)
     metadata_path = target / "metadata.json"
     expected = {
@@ -91,8 +91,12 @@ def load_or_build_store(
             store = FAISS.load_local(
                 str(target), embeddings, allow_dangerous_deserialization=True
             )
-            return store, True, int(metadata["chunk_count"])
+            return store, True, int(metadata["chunk_count"]), pages
 
+    if pages is None:
+        pages = load_documents(str(pdf_dir))
+        if not pages:
+            raise ValueError(f"No PDF pages loaded from {pdf_dir}.")
     chunks = build_chunks(pages, chunk_size, chunk_overlap)
     store = FAISS.from_documents(chunks, embeddings)
     target.mkdir(parents=True, exist_ok=True)
@@ -100,7 +104,7 @@ def load_or_build_store(
     metadata_path.write_text(
         json.dumps({**expected, "chunk_count": len(chunks)}, indent=2), encoding="utf-8"
     )
-    return store, False, len(chunks)
+    return store, False, len(chunks), pages
 
 
 def evaluate_configuration(
@@ -166,17 +170,14 @@ def main() -> None:
         raise SystemExit("--fetch-k must be greater than or equal to every k value for MMR.")
 
     dataset = load_financebench_dataset(questions, pdf_dir, limit=args.limit)
-    pages = load_documents(str(pdf_dir))
-    if not pages:
-        raise SystemExit(f"No PDF pages loaded from {pdf_dir}.")
-
     model = args.embedding_model or settings.embedding_model
     embeddings = get_embeddings(args.embedding_model)
     all_results: list[dict[str, Any]] = []
+    pages: list[Any] | None = None
 
     for chunk_size, chunk_overlap in product(args.chunk_size, args.chunk_overlap):
         started = perf_counter()
-        store, cache_hit, chunk_count = load_or_build_store(
+        store, cache_hit, chunk_count, pages = load_or_build_store(
             pages=pages,
             embeddings=embeddings,
             model=model,
