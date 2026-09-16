@@ -4,6 +4,7 @@ import pytest
 
 from app.evaluation.retrieval import (
     evaluate_ranked_documents,
+    evaluate_ranked_documents_by_locations,
     load_evaluation_dataset,
     source_basename,
 )
@@ -43,6 +44,21 @@ def test_duplicate_chunks_do_not_inflate_page_recall():
     assert result["precision_at_k"] == pytest.approx(2 / 3)
     assert result["recall_at_k"] == 0.5
     assert result["matched_loader_page_indices"] == [10]
+    assert result["redundancy_rate"] == pytest.approx(1 / 3)
+
+
+def test_multi_document_ground_truth_and_unique_page_precision():
+    result = evaluate_ranked_documents_by_locations(
+        [document(2, "/data/a.pdf"), document(2, "/data/a.pdf"), document(7, "/data/b.pdf")],
+        relevant_locations={("a.pdf", 2), ("b.pdf", 7)},
+        k=3,
+    )
+
+    assert result["precision_at_k"] == 1.0
+    assert result["unique_page_precision_at_k"] == 1.0
+    assert result["recall_at_k"] == 1.0
+    assert result["redundancy_rate"] == pytest.approx(1 / 3)
+    assert result["unique_location_count"] == 2
 
 
 def test_same_page_from_another_document_is_not_relevant():
@@ -67,4 +83,3 @@ def test_repository_dataset_contract():
     )
     assert dataset["dataset_name"] == "automobile_engineering_rag_eval_v1"
     assert len(dataset["examples"]) == 10
-

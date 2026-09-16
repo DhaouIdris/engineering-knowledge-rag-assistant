@@ -52,6 +52,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-overlap", nargs="+", type=int, default=[64])
     parser.add_argument("--k", nargs="+", type=int, default=[4])
     parser.add_argument(
+        "--fetch-k",
+        type=int,
+        default=20,
+        help="Fixed MMR candidate-pool size, shared across all k values.",
+    )
+    parser.add_argument(
         "--search-type",
         nargs="+",
         choices=("similarity", "mmr"),
@@ -84,10 +90,12 @@ def build_chunks(pages: list[Any], chunk_size: int, chunk_overlap: int) -> list[
     return splitter.split_documents(pages)
 
 
-def make_retriever(store: FAISS, search_type: str, k: int):
+def make_retriever(store: FAISS, search_type: str, k: int, fetch_k: int = 20):
     search_kwargs: dict[str, int] = {"k": k}
     if search_type == "mmr":
-        search_kwargs["fetch_k"] = max(10, k * 2)
+        if fetch_k < k:
+            raise ValueError("fetch_k must be greater than or equal to k for MMR.")
+        search_kwargs["fetch_k"] = fetch_k
     return store.as_retriever(search_type=search_type, search_kwargs=search_kwargs)
 
 
@@ -99,8 +107,9 @@ def evaluate_configuration(
     k: int,
     chunk_size: int,
     chunk_overlap: int,
+    fetch_k: int,
 ) -> dict[str, Any]:
-    retriever = make_retriever(store, search_type, k)
+    retriever = make_retriever(store, search_type, k, fetch_k)
     source_filename = dataset["source_document"]["filename"]
     rows: list[dict[str, Any]] = []
 
@@ -130,13 +139,16 @@ def evaluate_configuration(
             "chunk_overlap": chunk_overlap,
             "search_type": search_type,
             "k": k,
+            "fetch_k": fetch_k if search_type == "mmr" else None,
         },
         "summary": {
             "questions": len(rows),
             "hit_at_k": mean_metric(rows, "hit_at_k"),
             "precision_at_k": mean_metric(rows, "precision_at_k"),
+            "unique_page_precision_at_k": mean_metric(rows, "unique_page_precision_at_k"),
             "recall_at_k": mean_metric(rows, "recall_at_k"),
             "mrr": mean_metric(rows, "reciprocal_rank"),
+            "redundancy_rate": mean_metric(rows, "redundancy_rate"),
             "mean_latency_ms": mean_metric(rows, "latency_ms"),
         },
         "questions": rows,
@@ -188,6 +200,7 @@ def main() -> None:
                 k=k,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
+                fetch_k=args.fetch_k,
             )
             results.append(result)
             print_summary(result)

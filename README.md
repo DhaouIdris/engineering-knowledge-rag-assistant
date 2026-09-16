@@ -9,7 +9,7 @@ LangChain tools.
 
 - Embeddings: `sentence-transformers/all-MiniLM-L6-v2`, normalized
 - Chunking: 512 characters with 64-character overlap
-- Retrieval: MMR, `k=4`, `fetch_k=max(10, 2*k)`
+- Retrieval: MMR, `k=4`, fixed `fetch_k=20`
 - Generation: `llama3.2` through Ollama
 - UI: Streamlit
 
@@ -106,6 +106,41 @@ data/benchmarks/financebench/
 
 It verifies the number of question records and PDFs after copying. The expected
 open-source question count is 150.
+
+### Run the FinanceBench retrieval benchmark
+
+Start with 10 questions to verify the complete pipeline while keeping the first
+run short:
+
+```powershell
+python .\scripts\evaluate_financebench_retrieval.py --limit 10
+```
+
+Then run all 150 questions and compare similarity search with MMR at three
+values of `k`:
+
+```powershell
+python .\scripts\evaluate_financebench_retrieval.py
+```
+
+The first run loads the 368 PDFs, creates embeddings, and saves a local FAISS
+index under `storage/financebench/`. Later runs with the same embedding model,
+chunk size, overlap, and unchanged PDF corpus reuse that index. Both the cache
+and detailed results are ignored by Git.
+
+Use a fixed MMR candidate pool so changing `k` does not silently change two
+variables at once:
+
+```powershell
+python .\scripts\evaluate_financebench_retrieval.py `
+  --k 3 5 10 `
+  --fetch-k 20 `
+  --search-type similarity mmr
+```
+
+To deliberately rebuild the index after changing the corpus, add
+`--rebuild-index`. Results are written to
+`evaluations/results/financebench_retrieval.json`.
 
 ## Setup
 

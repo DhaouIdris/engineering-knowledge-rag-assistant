@@ -62,6 +62,75 @@ def relevant_page_indices(example: Mapping[str, Any]) -> set[int]:
     }
 
 
+def evaluate_ranked_documents_by_locations(
+    documents: Sequence[Any],
+    *,
+    relevant_locations: set[tuple[str, int]],
+    k: int,
+) -> dict[str, Any]:
+    """Evaluate retrieval against ``(source filename, zero-based page)`` pairs.
+
+    Chunk precision intentionally counts duplicate relevant chunks because each
+    chunk consumes context space. Unique-page precision and redundancy expose
+    the effect of overlapping chunks separately.
+    """
+    if k <= 0:
+        raise ValueError("k must be strictly positive.")
+    if not relevant_locations:
+        raise ValueError("relevant_locations must not be empty.")
+
+    ranked = list(documents[:k])
+    relevant_ranks: list[int] = []
+    matched_locations: set[tuple[str, int]] = set()
+    retrieved_locations: set[tuple[str, int]] = set()
+    retrieved: list[dict[str, Any]] = []
+
+    for rank, document in enumerate(ranked, start=1):
+        metadata = getattr(document, "metadata", {}) or {}
+        page = metadata.get("page")
+        filename = source_basename(metadata.get("source"))
+        location = (filename, page) if isinstance(page, int) else None
+        is_relevant = location in relevant_locations if location else False
+
+        if location:
+            retrieved_locations.add(location)
+        if is_relevant:
+            relevant_ranks.append(rank)
+            matched_locations.add(location)
+
+        retrieved.append(
+            {
+                "rank": rank,
+                "source": filename,
+                "loader_page_index": page,
+                "pdf_page_number": page + 1 if isinstance(page, int) else None,
+                "relevant": is_relevant,
+            }
+        )
+
+    retrieved_count = len(ranked)
+    unique_location_count = len(retrieved_locations)
+    matched_sorted = sorted(matched_locations)
+    return {
+        "hit_at_k": 1.0 if relevant_ranks else 0.0,
+        "precision_at_k": len(relevant_ranks) / retrieved_count if retrieved_count else 0.0,
+        "unique_page_precision_at_k": (
+            len(matched_locations) / unique_location_count if unique_location_count else 0.0
+        ),
+        "recall_at_k": len(matched_locations) / len(relevant_locations),
+        "reciprocal_rank": 1.0 / relevant_ranks[0] if relevant_ranks else 0.0,
+        "redundancy_rate": (
+            1.0 - unique_location_count / retrieved_count if retrieved_count else 0.0
+        ),
+        "unique_location_count": unique_location_count,
+        "matched_locations": [
+            {"source": filename, "loader_page_index": page}
+            for filename, page in matched_sorted
+        ],
+        "retrieved": retrieved,
+    }
+
+
 def evaluate_ranked_documents(
     documents: Sequence[Any],
     *,
@@ -76,54 +145,20 @@ def evaluate_ranked_documents(
     coverage of unique relevant pages, which avoids duplicate overlapping chunks
     artificially increasing recall.
     """
-    if k <= 0:
-        raise ValueError("k must be strictly positive.")
     if not relevant_pages:
         raise ValueError("relevant_pages must not be empty.")
-
-    ranked = list(documents[:k])
-    relevant_ranks: list[int] = []
-    matched_pages: set[int] = set()
-    retrieved: list[dict[str, Any]] = []
-
-    for rank, document in enumerate(ranked, start=1):
-        metadata = getattr(document, "metadata", {}) or {}
-        page = metadata.get("page")
-        filename = source_basename(metadata.get("source"))
-        is_relevant = filename == expected_filename and page in relevant_pages
-
-        if is_relevant:
-            relevant_ranks.append(rank)
-            matched_pages.add(int(page))
-
-        retrieved.append(
-            {
-                "rank": rank,
-                "source": filename,
-                "loader_page_index": page,
-                "pdf_page_number": page + 1 if isinstance(page, int) else None,
-                "relevant": is_relevant,
-            }
-        )
-
-    retrieved_count = len(ranked)
-    hit_at_k = 1.0 if relevant_ranks else 0.0
-    precision_at_k = len(relevant_ranks) / retrieved_count if retrieved_count else 0.0
-    recall_at_k = len(matched_pages) / len(relevant_pages)
-    reciprocal_rank = 1.0 / relevant_ranks[0] if relevant_ranks else 0.0
-
-    return {
-        "hit_at_k": hit_at_k,
-        "precision_at_k": precision_at_k,
-        "recall_at_k": recall_at_k,
-        "reciprocal_rank": reciprocal_rank,
-        "matched_loader_page_indices": sorted(matched_pages),
-        "retrieved": retrieved,
-    }
+    result = evaluate_ranked_documents_by_locations(
+        documents,
+        relevant_locations={(expected_filename, page) for page in relevant_pages},
+        k=k,
+    )
+    result["matched_loader_page_indices"] = sorted(
+        location["loader_page_index"] for location in result["matched_locations"]
+    )
+    return result
 
 
 def mean_metric(rows: Iterable[Mapping[str, Any]], metric: str) -> float:
     """Return a macro average over questions."""
     values = [float(row[metric]) for row in rows]
     return sum(values) / len(values) if values else 0.0
-
