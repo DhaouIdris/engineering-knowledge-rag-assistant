@@ -6,6 +6,7 @@ streamlit==1.37.0
 faiss-cpu==1.8.0
 sentence-transformers==3.0.1
 pypdf==4.3.1
+cryptography==43.0.1
 python-dotenv==1.0.1
 pydantic-settings==2.4.0
 numexpr==2.10.1
