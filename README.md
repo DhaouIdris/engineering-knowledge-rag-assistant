@@ -70,6 +70,43 @@ Detailed per-question results are written to
 Ground truth uses source filename plus zero-based PDF page metadata. It does not
 use chunk IDs because chunk IDs change when chunk size or overlap changes.
 
+## FinanceBench benchmark data
+
+FinanceBench is the primary external benchmark planned for this project. Its
+PDFs and annotations are local evaluation inputs and are intentionally excluded
+from Git through `data/benchmarks/`.
+
+Download the official FinanceBench repository as a ZIP, then run the setup
+script from the project root in PowerShell:
+
+```powershell
+.\scripts\setup_financebench.ps1 `
+  -ZipPath "$env:USERPROFILE\Downloads\financebench-main.zip"
+```
+
+If PowerShell blocks local scripts, run it once without changing the permanent
+execution policy:
+
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File .\scripts\setup_financebench.ps1 `
+  -ZipPath "$env:USERPROFILE\Downloads\financebench-main.zip"
+```
+
+The script extracts the archive to a temporary directory and copies only the
+benchmark inputs into this structure:
+
+```text
+data/benchmarks/financebench/
+├── financebench_open_source.jsonl
+├── financebench_document_information.jsonl
+└── pdfs/
+    └── *.pdf
+```
+
+It verifies the number of question records and PDFs after copying. The expected
+open-source question count is 150.
+
 ## Setup
 
 ```bash

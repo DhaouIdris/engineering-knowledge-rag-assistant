@@ -11,3 +11,4 @@ htmlcov/
 storage/
 evaluations/results/
 data/documents/*.pdf
+data/benchmarks/
