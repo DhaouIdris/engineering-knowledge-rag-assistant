@@ -109,13 +109,15 @@ open-source question count is 150.
 
 ### Run the FinanceBench retrieval benchmark
 
-Start with 10 questions to verify the complete pipeline. The evaluation phase
-will be short, but the first run still indexes the complete PDF corpus so the
-retrieval conditions remain realistic:
+Start with 10 questions and only their referenced PDFs to verify the complete
+pipeline quickly:
 
 ```powershell
-python .\scripts\evaluate_financebench_retrieval.py --limit 10
+python .\scripts\evaluate_financebench_retrieval.py --limit 10 --smoke-test
 ```
+
+Smoke-test metrics are intentionally easier and must not be reported as full
+FinanceBench results. The smoke index uses a separate cache directory.
 
 Then run all 150 questions and compare similarity search with MMR at three
 values of `k`:

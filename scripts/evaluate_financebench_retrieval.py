@@ -46,14 +46,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--rebuild-index", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="Index only PDFs referenced by the limited questions. Not a comparable benchmark run.",
+    )
     parser.add_argument("--output", default="evaluations/results/financebench_retrieval.json")
     return parser.parse_args()
 
 
-def corpus_fingerprint(pdf_dir: Path) -> str:
+def selected_pdfs(pdf_dir: Path, filenames: set[str] | None) -> list[Path]:
+    return sorted(
+        (pdf for pdf in pdf_dir.glob("*.pdf") if filenames is None or pdf.name in filenames),
+        key=lambda path: path.name.lower(),
+    )
+
+
+def corpus_fingerprint(pdf_dir: Path, filenames: set[str] | None = None) -> str:
     """Fingerprint filenames, sizes and modification times without reading huge PDFs."""
     digest = hashlib.sha256()
-    for pdf in sorted(pdf_dir.glob("*.pdf"), key=lambda path: path.name.lower()):
+    for pdf in selected_pdfs(pdf_dir, filenames):
         stat = pdf.stat()
         digest.update(f"{pdf.name}\0{stat.st_size}\0{stat.st_mtime_ns}\n".encode())
     return digest.hexdigest()
@@ -74,6 +86,7 @@ def load_or_build_store(
     chunk_size: int,
     chunk_overlap: int,
     rebuild: bool,
+    filenames: set[str] | None,
 ) -> tuple[FAISS, bool, int, list[Any] | None]:
     target = cache_path(cache_dir, model, chunk_size, chunk_overlap)
     metadata_path = target / "metadata.json"
@@ -81,8 +94,8 @@ def load_or_build_store(
         "embedding_model": model,
         "chunk_size": chunk_size,
         "chunk_overlap": chunk_overlap,
-        "corpus_fingerprint": corpus_fingerprint(pdf_dir),
-        "pdf_count": len(list(pdf_dir.glob("*.pdf"))),
+        "corpus_fingerprint": corpus_fingerprint(pdf_dir, filenames),
+        "pdf_count": len(selected_pdfs(pdf_dir, filenames)),
     }
 
     if not rebuild and metadata_path.exists():
@@ -94,10 +107,16 @@ def load_or_build_store(
             return store, True, int(metadata["chunk_count"]), pages
 
     if pages is None:
-        pages = load_documents(str(pdf_dir))
+        pages = load_documents(str(pdf_dir), filenames=filenames)
         if not pages:
             raise ValueError(f"No PDF pages loaded from {pdf_dir}.")
+    print(
+        f"Splitting {len(pages)} pages with chunk_size={chunk_size}, "
+        f"overlap={chunk_overlap}...",
+        flush=True,
+    )
     chunks = build_chunks(pages, chunk_size, chunk_overlap)
+    print(f"Embedding {len(chunks)} chunks and building FAISS index...", flush=True)
     store = FAISS.from_documents(chunks, embeddings)
     target.mkdir(parents=True, exist_ok=True)
     store.save_local(str(target))
@@ -168,8 +187,25 @@ def main() -> None:
         raise SystemExit("Every k value must be strictly positive.")
     if "mmr" in args.search_type and args.fetch_k < max(args.k):
         raise SystemExit("--fetch-k must be greater than or equal to every k value for MMR.")
+    if args.smoke_test and args.limit is None:
+        raise SystemExit("--smoke-test requires --limit so it cannot be mistaken for a full benchmark.")
 
     dataset = load_financebench_dataset(questions, pdf_dir, limit=args.limit)
+    filenames = None
+    cache_dir = Path(args.cache_dir) / "full"
+    if args.smoke_test:
+        filenames = {
+            filename
+            for example in dataset["examples"]
+            for filename, _ in example["relevant_locations"]
+        }
+        cache_dir = Path(args.cache_dir) / "smoke"
+        print(
+            f"SMOKE TEST: indexing {len(filenames)} relevant PDFs for "
+            f"{len(dataset['examples'])} questions. Results are not comparable "
+            "to the full-corpus benchmark.",
+            flush=True,
+        )
     model = args.embedding_model or settings.embedding_model
     embeddings = get_embeddings(args.embedding_model)
     all_results: list[dict[str, Any]] = []
@@ -182,10 +218,11 @@ def main() -> None:
             embeddings=embeddings,
             model=model,
             pdf_dir=pdf_dir,
-            cache_dir=Path(args.cache_dir),
+            cache_dir=cache_dir,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             rebuild=args.rebuild_index,
+            filenames=filenames,
         )
         print(
             f"Index {'loaded from cache' if cache_hit else 'built'}: {chunk_count} chunks "

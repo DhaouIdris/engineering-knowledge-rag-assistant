@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List
+from typing import Collection, List
 from langchain_community.document_loaders import PyMuPDFLoader, PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
@@ -8,9 +8,16 @@ from app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-def load_documents(folder_path: str = None) -> List[Document]:
+def load_documents(
+    folder_path: str = None,
+    filenames: Collection[str] | None = None,
+) -> List[Document]:
     folder = Path(folder_path or settings.documents_path)
-    pdf_files = list(folder.glob("*.pdf"))
+    allowed = set(filenames) if filenames is not None else None
+    pdf_files = sorted(
+        (pdf for pdf in folder.glob("*.pdf") if allowed is None or pdf.name in allowed),
+        key=lambda path: path.name.lower(),
+    )
     if not pdf_files:
         logger.warning(f"No PDF found in {folder}")
         return []
