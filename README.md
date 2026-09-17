@@ -72,6 +72,26 @@ Detailed per-question results are written to
 Detailed FinanceBench output also stores the expected evidence text, a preview
 of every retrieved chunk, and its distance from the nearest annotated page.
 
+To isolate passage retrieval from document routing, use the oracle document
+scope. FinanceBench supplies the evidence document, so these results must be
+reported separately from corpus retrieval:
+
+```powershell
+python .\scripts\evaluate_financebench_retrieval.py `
+  --limit 10 --smoke-test `
+  --retrieval-scope corpus document
+```
+
+Run controlled chunking experiments separately so only one parameter pair
+changes at a time:
+
+```powershell
+python .\scripts\evaluate_financebench_retrieval.py `
+  --limit 10 --smoke-test --retrieval-scope document `
+  --chunk-size 1024 --chunk-overlap 128 `
+  --output evaluations/results/financebench_document_1024.json
+```
+
 Ground truth uses source filename plus zero-based PDF page metadata. It does not
 use chunk IDs because chunk IDs change when chunk size or overlap changes.
 

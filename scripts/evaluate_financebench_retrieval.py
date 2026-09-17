@@ -26,6 +26,7 @@ from app.evaluation.financebench import load_financebench_dataset
 from app.evaluation.retrieval import (
     evaluate_ranked_documents_by_locations,
     mean_metric,
+    source_basename,
 )
 from scripts.evaluate_retrieval import build_chunks, make_retriever
 
@@ -42,6 +43,13 @@ def parse_args() -> argparse.Namespace:
         "--search-type", nargs="+", choices=("similarity", "mmr"), default=["similarity", "mmr"]
     )
     parser.add_argument("--fetch-k", type=int, default=20)
+    parser.add_argument(
+        "--retrieval-scope",
+        nargs="+",
+        choices=("corpus", "document"),
+        default=["corpus"],
+        help="Search the corpus or oracle-filter to the FinanceBench evidence document.",
+    )
     parser.add_argument("--embedding-model", default=None)
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--rebuild-index", action="store_true")
@@ -127,13 +135,55 @@ def load_or_build_store(
 
 
 def evaluate_configuration(
-    *, store: FAISS, dataset: dict[str, Any], search_type: str, k: int, fetch_k: int
+    *,
+    store: FAISS,
+    dataset: dict[str, Any],
+    search_type: str,
+    k: int,
+    fetch_k: int,
+    retrieval_scope: str,
 ) -> dict[str, Any]:
-    retriever = make_retriever(store, search_type, k, fetch_k)
+    retriever = None
+    source_lookup: dict[str, str] = {}
+    if retrieval_scope == "corpus":
+        retriever = make_retriever(store, search_type, k, fetch_k)
+    else:
+        for document in store.docstore._dict.values():
+            source = str(document.metadata.get("source", ""))
+            source_lookup[source_basename(source)] = source
+
     rows: list[dict[str, Any]] = []
     for example in dataset["examples"]:
         started = perf_counter()
-        documents = retriever.invoke(example["question"])
+        if retrieval_scope == "corpus":
+            documents = retriever.invoke(example["question"])
+        else:
+            expected_filenames = {
+                filename for filename, _ in example["relevant_locations"]
+            }
+            if len(expected_filenames) != 1:
+                raise ValueError(
+                    "Document-scope evaluation currently requires exactly one evidence PDF."
+                )
+            expected_filename = next(iter(expected_filenames))
+            if expected_filename not in source_lookup:
+                raise ValueError(f"Indexed PDF not found: {expected_filename}")
+            metadata_filter = {"source": source_lookup[expected_filename]}
+            filter_fetch_k = int(store.index.ntotal)
+            if search_type == "similarity":
+                documents = store.similarity_search(
+                    example["question"],
+                    k=k,
+                    filter=metadata_filter,
+                    fetch_k=filter_fetch_k,
+                )
+            else:
+                documents = store.max_marginal_relevance_search(
+                    example["question"],
+                    k=k,
+                    filter=metadata_filter,
+                    fetch_k=filter_fetch_k,
+                )
         latency_ms = (perf_counter() - started) * 1000
         metrics = evaluate_ranked_documents_by_locations(
             documents, relevant_locations=example["relevant_locations"], k=k
@@ -157,6 +207,7 @@ def evaluate_configuration(
             "search_type": search_type,
             "k": k,
             "fetch_k": fetch_k if search_type == "mmr" else None,
+            "retrieval_scope": retrieval_scope,
         },
         "summary": {
             "questions": len(rows),
@@ -177,7 +228,7 @@ def evaluate_configuration(
 def print_summary(result: dict[str, Any]) -> None:
     config, summary = result["configuration"], result["summary"]
     print(
-        "search={search_type:<10} k={k:<2} | Hit={hit_at_k:.3f} "
+        "scope={retrieval_scope:<8} search={search_type:<10} k={k:<2} | Hit={hit_at_k:.3f} "
         "Precision={precision_at_k:.3f} Recall={recall_at_k:.3f} "
         "MRR={mrr:.3f} DocHit={document_hit_at_k:.3f} "
         "DocMRR={document_mrr:.3f} Redundancy={redundancy_rate:.3f} "
@@ -235,9 +286,16 @@ def main() -> None:
             f"Index {'loaded from cache' if cache_hit else 'built'}: {chunk_count} chunks "
             f"({perf_counter() - started:.1f}s)"
         )
-        for search_type, k in product(args.search_type, args.k):
+        for retrieval_scope, search_type, k in product(
+            args.retrieval_scope, args.search_type, args.k
+        ):
             result = evaluate_configuration(
-                store=store, dataset=dataset, search_type=search_type, k=k, fetch_k=args.fetch_k
+                store=store,
+                dataset=dataset,
+                search_type=search_type,
+                k=k,
+                fetch_k=args.fetch_k,
+                retrieval_scope=retrieval_scope,
             )
             result["configuration"].update(
                 {"chunk_size": chunk_size, "chunk_overlap": chunk_overlap}
