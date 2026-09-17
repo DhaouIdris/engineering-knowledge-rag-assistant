@@ -13,6 +13,7 @@ from app.evaluation.retrieval import (
 @dataclass
 class FakeDocument:
     metadata: dict
+    page_content: str = ""
 
 
 def document(page: int, source: str = "/data/manual.pdf") -> FakeDocument:
@@ -31,6 +32,9 @@ def test_ranked_metrics_use_source_and_page_ground_truth():
     assert result["precision_at_k"] == pytest.approx(2 / 3)
     assert result["recall_at_k"] == 1.0
     assert result["reciprocal_rank"] == 0.5
+    assert result["document_hit_at_k"] == 1.0
+    assert result["document_reciprocal_rank"] == 1.0
+    assert result["retrieved"][0]["distance_to_nearest_relevant_page"] == 8
 
 
 def test_duplicate_chunks_do_not_inflate_page_recall():
@@ -59,6 +63,22 @@ def test_multi_document_ground_truth_and_unique_page_precision():
     assert result["recall_at_k"] == 1.0
     assert result["redundancy_rate"] == pytest.approx(1 / 3)
     assert result["unique_location_count"] == 2
+
+
+def test_diagnostics_include_text_and_separate_document_from_page_hit():
+    retrieved = FakeDocument(
+        metadata={"page": 7, "source": "/data/manual.pdf"},
+        page_content="  A financial   table with revenue.  ",
+    )
+    result = evaluate_ranked_documents_by_locations(
+        [retrieved], relevant_locations={("manual.pdf", 10)}, k=1
+    )
+
+    assert result["hit_at_k"] == 0.0
+    assert result["document_hit_at_k"] == 1.0
+    assert result["document_reciprocal_rank"] == 1.0
+    assert result["retrieved"][0]["distance_to_nearest_relevant_page"] == 3
+    assert result["retrieved"][0]["text_preview"] == "A financial table with revenue."
 
 
 def test_same_page_from_another_document_is_not_relevant():

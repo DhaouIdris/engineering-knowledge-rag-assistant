@@ -71,6 +71,7 @@ def load_financebench_dataset(
             raise ValueError(f"Question {example_id} has no evidence.")
 
         locations: set[tuple[str, int]] = set()
+        resolved_evidence: list[dict[str, Any]] = []
         for item in evidence:
             document_name = item.get("doc_name")
             page = item.get("evidence_page_num")
@@ -82,7 +83,15 @@ def load_financebench_dataset(
                     f"Question {example_id} references {document_name!r}, but its PDF "
                     f"was not found in {Path(pdf_dir)}."
                 )
-            locations.add((lookup[key], page))
+            resolved_filename = lookup[key]
+            locations.add((resolved_filename, page))
+            resolved_evidence.append(
+                {
+                    "source": resolved_filename,
+                    "loader_page_index": page,
+                    "evidence_text": item.get("evidence_text"),
+                }
+            )
 
         examples.append(
             {
@@ -93,6 +102,7 @@ def load_financebench_dataset(
                 "question_type": row.get("question_type"),
                 "question_reasoning": row.get("question_reasoning"),
                 "relevant_locations": locations,
+                "evidence": resolved_evidence,
             }
         )
 

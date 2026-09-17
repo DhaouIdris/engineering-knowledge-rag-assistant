@@ -66,6 +66,11 @@ Detailed per-question results are written to
 - **MRR**: reciprocal rank of the first chunk from a relevant page, averaged
   across questions.
 - **Latency**: retrieval time per question; index construction is excluded.
+- **Document Hit@K / document MRR**: whether the correct PDF is retrieved and
+  how highly its first chunk is ranked, independently from exact-page matching.
+
+Detailed FinanceBench output also stores the expected evidence text, a preview
+of every retrieved chunk, and its distance from the nearest annotated page.
 
 Ground truth uses source filename plus zero-based PDF page metadata. It does not
 use chunk IDs because chunk IDs change when chunk size or overlap changes.

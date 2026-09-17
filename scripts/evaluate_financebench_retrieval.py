@@ -142,7 +142,11 @@ def evaluate_configuration(
             {
                 "id": example["id"],
                 "question": example["question"],
+                "answer": example["answer"],
+                "justification": example["justification"],
                 "question_type": example["question_type"],
+                "question_reasoning": example["question_reasoning"],
+                "evidence": example["evidence"],
                 "latency_ms": latency_ms,
                 **metrics,
             }
@@ -161,6 +165,8 @@ def evaluate_configuration(
             "unique_page_precision_at_k": mean_metric(rows, "unique_page_precision_at_k"),
             "recall_at_k": mean_metric(rows, "recall_at_k"),
             "mrr": mean_metric(rows, "reciprocal_rank"),
+            "document_hit_at_k": mean_metric(rows, "document_hit_at_k"),
+            "document_mrr": mean_metric(rows, "document_reciprocal_rank"),
             "redundancy_rate": mean_metric(rows, "redundancy_rate"),
             "mean_latency_ms": mean_metric(rows, "latency_ms"),
         },
@@ -173,7 +179,8 @@ def print_summary(result: dict[str, Any]) -> None:
     print(
         "search={search_type:<10} k={k:<2} | Hit={hit_at_k:.3f} "
         "Precision={precision_at_k:.3f} Recall={recall_at_k:.3f} "
-        "MRR={mrr:.3f} Redundancy={redundancy_rate:.3f} "
+        "MRR={mrr:.3f} DocHit={document_hit_at_k:.3f} "
+        "DocMRR={document_mrr:.3f} Redundancy={redundancy_rate:.3f} "
         "Latency={mean_latency_ms:.1f}ms".format(**config, **summary)
     )
 

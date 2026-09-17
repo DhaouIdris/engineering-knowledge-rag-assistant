@@ -18,7 +18,7 @@ def financebench_row(example_id="financebench_id_1", doc_name="ACME_2024_10K"):
         "question_type": "metrics-generated",
         "question_reasoning": "Information extraction",
         "evidence": [
-            {"doc_name": doc_name, "evidence_page_num": 0},
+            {"doc_name": doc_name, "evidence_page_num": 0, "evidence_text": "Revenue table"},
             {"doc_name": doc_name, "evidence_page_num": 0},
             {"doc_name": doc_name, "evidence_page_num": 2},
         ],
@@ -40,6 +40,7 @@ def test_load_financebench_resolves_pdfs_and_deduplicates_evidence(tmp_path):
         ("ACME_2024_10K.pdf", 0),
         ("ACME_2024_10K.pdf", 2),
     }
+    assert example["evidence"][0]["evidence_text"] == "Revenue table"
 
 
 def test_load_financebench_reports_missing_pdf(tmp_path):

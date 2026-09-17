@@ -81,6 +81,11 @@ def evaluate_ranked_documents_by_locations(
 
     ranked = list(documents[:k])
     relevant_ranks: list[int] = []
+    relevant_document_ranks: list[int] = []
+    relevant_filenames = {filename for filename, _ in relevant_locations}
+    pages_by_filename: dict[str, set[int]] = {}
+    for filename, page in relevant_locations:
+        pages_by_filename.setdefault(filename, set()).add(page)
     matched_locations: set[tuple[str, int]] = set()
     retrieved_locations: set[tuple[str, int]] = set()
     retrieved: list[dict[str, Any]] = []
@@ -91,9 +96,15 @@ def evaluate_ranked_documents_by_locations(
         filename = source_basename(metadata.get("source"))
         location = (filename, page) if isinstance(page, int) else None
         is_relevant = location in relevant_locations if location else False
+        is_relevant_document = filename in relevant_filenames
+        page_distance = None
+        if isinstance(page, int) and is_relevant_document:
+            page_distance = min(abs(page - expected) for expected in pages_by_filename[filename])
 
         if location:
             retrieved_locations.add(location)
+        if is_relevant_document:
+            relevant_document_ranks.append(rank)
         if is_relevant:
             relevant_ranks.append(rank)
             matched_locations.add(location)
@@ -105,6 +116,11 @@ def evaluate_ranked_documents_by_locations(
                 "loader_page_index": page,
                 "pdf_page_number": page + 1 if isinstance(page, int) else None,
                 "relevant": is_relevant,
+                "relevant_document": is_relevant_document,
+                "distance_to_nearest_relevant_page": page_distance,
+                "text_preview": " ".join(
+                    str(getattr(document, "page_content", "") or "").split()
+                )[:500],
             }
         )
 
@@ -119,6 +135,10 @@ def evaluate_ranked_documents_by_locations(
         ),
         "recall_at_k": len(matched_locations) / len(relevant_locations),
         "reciprocal_rank": 1.0 / relevant_ranks[0] if relevant_ranks else 0.0,
+        "document_hit_at_k": 1.0 if relevant_document_ranks else 0.0,
+        "document_reciprocal_rank": (
+            1.0 / relevant_document_ranks[0] if relevant_document_ranks else 0.0
+        ),
         "redundancy_rate": (
             1.0 - unique_location_count / retrieved_count if retrieved_count else 0.0
         ),
@@ -126,6 +146,10 @@ def evaluate_ranked_documents_by_locations(
         "matched_locations": [
             {"source": filename, "loader_page_index": page}
             for filename, page in matched_sorted
+        ],
+        "expected_locations": [
+            {"source": filename, "loader_page_index": page}
+            for filename, page in sorted(relevant_locations)
         ],
         "retrieved": retrieved,
     }
