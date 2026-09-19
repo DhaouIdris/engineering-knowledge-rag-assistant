@@ -120,6 +120,23 @@ BM25 is an independent lexical baseline here; the script does not combine it
 with FAISS scores. In document scope both methods use the FinanceBench evidence
 PDF as an oracle filter, so neither score measures document routing.
 
+To check whether lexical and semantic rankings complement each other, fuse
+their top 20 candidates using reciprocal rank fusion (RRF). This uses the
+existing FAISS cache and BM25 on the same chunks, without a new download:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\evaluate_financebench_retrieval.py `
+  --limit 10 --smoke-test --retrieval-scope document `
+  --search-type similarity bm25 rrf --k 3 5 10 `
+  --rrf-candidates 20 `
+  --output evaluations/results/financebench_rrf_512.json
+```
+
+RRF adds `1 / (60 + rank)` per retriever for each chunk. The reported query
+latency includes both searches but excludes BM25 index construction. These
+ten questions and the oracle document filter provide a quick experiment,
+not a full-corpus benchmark; document hit is 1 by construction.
+
 Ground truth uses source filename plus zero-based PDF page metadata. It does not
 use chunk IDs because chunk IDs change when chunk size or overlap changes.
 

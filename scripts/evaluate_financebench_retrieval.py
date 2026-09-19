@@ -23,6 +23,7 @@ from app.core.document_loader import load_documents
 from app.core.embeddings import get_embeddings
 from app.core.config import settings
 from app.evaluation.financebench import load_financebench_dataset
+from app.evaluation.fusion import reciprocal_rank_fusion
 from app.evaluation.lexical import BM25Index
 from app.evaluation.retrieval import (
     evaluate_ranked_documents_by_locations,
@@ -41,9 +42,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-overlap", nargs="+", type=int, default=[64])
     parser.add_argument("--k", nargs="+", type=int, default=[3, 5, 10])
     parser.add_argument(
-        "--search-type", nargs="+", choices=("similarity", "mmr", "bm25"), default=["similarity", "mmr"]
+        "--search-type", nargs="+", choices=("similarity", "mmr", "bm25", "rrf"), default=["similarity", "mmr"]
     )
     parser.add_argument("--fetch-k", type=int, default=20)
+    parser.add_argument(
+        "--rrf-candidates", type=int, default=20,
+        help="Candidates from each of FAISS and BM25 before reciprocal rank fusion.",
+    )
     parser.add_argument(
         "--retrieval-scope",
         nargs="+",
@@ -149,12 +154,13 @@ def evaluate_configuration(
     fetch_k: int,
     retrieval_scope: str,
     query_prefix: str = "",
+    rrf_candidates: int = 20,
 ) -> dict[str, Any]:
     retriever = None
     source_lookup: dict[str, str] = {}
     lexical_index: BM25Index | None = None
     lexical_by_document: dict[str, BM25Index] = {}
-    if search_type == "bm25":
+    if search_type in ("bm25", "rrf"):
         chunks = list(store.docstore._dict.values())
         if retrieval_scope == "corpus":
             lexical_index = BM25Index(chunks)
@@ -167,7 +173,7 @@ def evaluate_configuration(
                 filename: BM25Index(group) for filename, group in grouped.items()
             }
     if retrieval_scope == "corpus":
-        if search_type != "bm25":
+        if search_type not in ("bm25", "rrf"):
             retriever = make_retriever(store, search_type, k, fetch_k)
     else:
         for document in store.docstore._dict.values():
@@ -179,11 +185,14 @@ def evaluate_configuration(
         retrieval_query = query_prefix + example["question"]
         started = perf_counter()
         if retrieval_scope == "corpus":
-            documents = (
-                lexical_index.search(example["question"], k)
-                if search_type == "bm25"
-                else retriever.invoke(retrieval_query)
-            )
+            if search_type == "rrf":
+                dense = store.similarity_search(retrieval_query, k=rrf_candidates)
+                lexical = lexical_index.search(example["question"], rrf_candidates)
+                documents = reciprocal_rank_fusion((dense, lexical), k=k)
+            elif search_type == "bm25":
+                documents = lexical_index.search(example["question"], k)
+            else:
+                documents = retriever.invoke(retrieval_query)
         else:
             expected_filenames = {
                 filename for filename, _ in example["relevant_locations"]
@@ -193,19 +202,27 @@ def evaluate_configuration(
                     "Document-scope evaluation currently requires exactly one evidence PDF."
                 )
             expected_filename = next(iter(expected_filenames))
+            if search_type in ("bm25", "rrf") and expected_filename not in lexical_by_document:
+                raise ValueError(f"Indexed PDF not found: {expected_filename}")
             if search_type == "bm25":
-                if expected_filename not in lexical_by_document:
-                    raise ValueError(f"Indexed PDF not found: {expected_filename}")
                 documents = lexical_by_document[expected_filename].search(example["question"], k)
             elif expected_filename not in source_lookup:
                 raise ValueError(f"Indexed PDF not found: {expected_filename}")
             else:
                 metadata_filter = {"source": source_lookup[expected_filename]}
                 filter_fetch_k = int(store.index.ntotal)
-                if search_type == "similarity":
-                    documents = store.similarity_search(
-                        retrieval_query, k=k, filter=metadata_filter, fetch_k=filter_fetch_k
+                if search_type in ("similarity", "rrf"):
+                    dense = store.similarity_search(
+                        retrieval_query, k=rrf_candidates if search_type == "rrf" else k,
+                        filter=metadata_filter, fetch_k=filter_fetch_k,
                     )
+                    if search_type == "rrf":
+                        lexical = lexical_by_document[expected_filename].search(
+                            example["question"], rrf_candidates
+                        )
+                        documents = reciprocal_rank_fusion((dense, lexical), k=k)
+                    else:
+                        documents = dense
                 else:
                     documents = store.max_marginal_relevance_search(
                         retrieval_query, k=k, filter=metadata_filter, fetch_k=filter_fetch_k
@@ -233,6 +250,8 @@ def evaluate_configuration(
             "search_type": search_type,
             "k": k,
             "fetch_k": fetch_k if search_type == "mmr" else None,
+            "rrf_candidates": rrf_candidates if search_type == "rrf" else None,
+            "rrf_constant": 60 if search_type == "rrf" else None,
             "retrieval_scope": retrieval_scope,
             "query_prefix": query_prefix,
         },
@@ -272,6 +291,8 @@ def main() -> None:
         raise SystemExit("Every k value must be strictly positive.")
     if "mmr" in args.search_type and args.fetch_k < max(args.k):
         raise SystemExit("--fetch-k must be greater than or equal to every k value for MMR.")
+    if "rrf" in args.search_type and args.rrf_candidates < max(args.k):
+        raise SystemExit("--rrf-candidates must be greater than or equal to every k value for RRF.")
     if args.smoke_test and args.limit is None:
         raise SystemExit("--smoke-test requires --limit so it cannot be mistaken for a full benchmark.")
     if "bm25" in args.search_type and args.query_prefix:
@@ -326,6 +347,7 @@ def main() -> None:
                 fetch_k=args.fetch_k,
                 retrieval_scope=retrieval_scope,
                 query_prefix=args.query_prefix,
+                rrf_candidates=args.rrf_candidates,
             )
             result["configuration"].update(
                 {"chunk_size": chunk_size, "chunk_overlap": chunk_overlap}
