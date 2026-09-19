@@ -23,6 +23,7 @@ from app.core.document_loader import load_documents
 from app.core.embeddings import get_embeddings
 from app.core.config import settings
 from app.evaluation.financebench import load_financebench_dataset
+from app.evaluation.lexical import BM25Index
 from app.evaluation.retrieval import (
     evaluate_ranked_documents_by_locations,
     mean_metric,
@@ -40,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-overlap", nargs="+", type=int, default=[64])
     parser.add_argument("--k", nargs="+", type=int, default=[3, 5, 10])
     parser.add_argument(
-        "--search-type", nargs="+", choices=("similarity", "mmr"), default=["similarity", "mmr"]
+        "--search-type", nargs="+", choices=("similarity", "mmr", "bm25"), default=["similarity", "mmr"]
     )
     parser.add_argument("--fetch-k", type=int, default=20)
     parser.add_argument(
@@ -151,8 +152,23 @@ def evaluate_configuration(
 ) -> dict[str, Any]:
     retriever = None
     source_lookup: dict[str, str] = {}
+    lexical_index: BM25Index | None = None
+    lexical_by_document: dict[str, BM25Index] = {}
+    if search_type == "bm25":
+        chunks = list(store.docstore._dict.values())
+        if retrieval_scope == "corpus":
+            lexical_index = BM25Index(chunks)
+        else:
+            grouped: dict[str, list[Any]] = {}
+            for chunk in chunks:
+                filename = source_basename(chunk.metadata.get("source"))
+                grouped.setdefault(filename, []).append(chunk)
+            lexical_by_document = {
+                filename: BM25Index(group) for filename, group in grouped.items()
+            }
     if retrieval_scope == "corpus":
-        retriever = make_retriever(store, search_type, k, fetch_k)
+        if search_type != "bm25":
+            retriever = make_retriever(store, search_type, k, fetch_k)
     else:
         for document in store.docstore._dict.values():
             source = str(document.metadata.get("source", ""))
@@ -163,7 +179,11 @@ def evaluate_configuration(
         retrieval_query = query_prefix + example["question"]
         started = perf_counter()
         if retrieval_scope == "corpus":
-            documents = retriever.invoke(retrieval_query)
+            documents = (
+                lexical_index.search(example["question"], k)
+                if search_type == "bm25"
+                else retriever.invoke(retrieval_query)
+            )
         else:
             expected_filenames = {
                 filename for filename, _ in example["relevant_locations"]
@@ -173,24 +193,23 @@ def evaluate_configuration(
                     "Document-scope evaluation currently requires exactly one evidence PDF."
                 )
             expected_filename = next(iter(expected_filenames))
-            if expected_filename not in source_lookup:
+            if search_type == "bm25":
+                if expected_filename not in lexical_by_document:
+                    raise ValueError(f"Indexed PDF not found: {expected_filename}")
+                documents = lexical_by_document[expected_filename].search(example["question"], k)
+            elif expected_filename not in source_lookup:
                 raise ValueError(f"Indexed PDF not found: {expected_filename}")
-            metadata_filter = {"source": source_lookup[expected_filename]}
-            filter_fetch_k = int(store.index.ntotal)
-            if search_type == "similarity":
-                documents = store.similarity_search(
-                    retrieval_query,
-                    k=k,
-                    filter=metadata_filter,
-                    fetch_k=filter_fetch_k,
-                )
             else:
-                documents = store.max_marginal_relevance_search(
-                    retrieval_query,
-                    k=k,
-                    filter=metadata_filter,
-                    fetch_k=filter_fetch_k,
-                )
+                metadata_filter = {"source": source_lookup[expected_filename]}
+                filter_fetch_k = int(store.index.ntotal)
+                if search_type == "similarity":
+                    documents = store.similarity_search(
+                        retrieval_query, k=k, filter=metadata_filter, fetch_k=filter_fetch_k
+                    )
+                else:
+                    documents = store.max_marginal_relevance_search(
+                        retrieval_query, k=k, filter=metadata_filter, fetch_k=filter_fetch_k
+                    )
         latency_ms = (perf_counter() - started) * 1000
         metrics = evaluate_ranked_documents_by_locations(
             documents, relevant_locations=example["relevant_locations"], k=k
@@ -255,6 +274,8 @@ def main() -> None:
         raise SystemExit("--fetch-k must be greater than or equal to every k value for MMR.")
     if args.smoke_test and args.limit is None:
         raise SystemExit("--smoke-test requires --limit so it cannot be mistaken for a full benchmark.")
+    if "bm25" in args.search_type and args.query_prefix:
+        raise SystemExit("--query-prefix applies only to embedding search, not BM25.")
 
     dataset = load_financebench_dataset(questions, pdf_dir, limit=args.limit)
     filenames = None

@@ -104,6 +104,22 @@ python .\scripts\evaluate_financebench_retrieval.py `
   --output evaluations/results/financebench_bge_instruction.json
 ```
 
+Compare semantic search with a BM25 lexical baseline on the **same chunks**
+and the same 10 questions. BM25 matches financial terms and years directly.
+The script reads chunks from the existing MiniLM FAISS cache, so this run
+does not rebuild the index or download another model:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\evaluate_financebench_retrieval.py `
+  --limit 10 --smoke-test --retrieval-scope document `
+  --search-type similarity bm25 --k 3 5 10 `
+  --output evaluations/results/financebench_similarity_vs_bm25.json
+```
+
+BM25 is an independent lexical baseline here; the script does not combine it
+with FAISS scores. In document scope both methods use the FinanceBench evidence
+PDF as an oracle filter, so neither score measures document routing.
+
 Ground truth uses source filename plus zero-based PDF page metadata. It does not
 use chunk IDs because chunk IDs change when chunk size or overlap changes.
 
