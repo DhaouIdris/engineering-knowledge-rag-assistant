@@ -92,6 +92,18 @@ python .\scripts\evaluate_financebench_retrieval.py `
   --output evaluations/results/financebench_document_1024.json
 ```
 
+For BGE v1.5, you can test its recommended query instruction while reusing
+the existing BGE index. The prefix is applied only to questions; no PDF is
+reloaded or embedded again when the cache matches:
+
+```powershell
+python .\scripts\evaluate_financebench_retrieval.py `
+  --limit 10 --smoke-test --retrieval-scope document `
+  --search-type similarity --embedding-model BAAI/bge-small-en-v1.5 `
+  --query-prefix "Represent this sentence for searching relevant passages: " `
+  --output evaluations/results/financebench_bge_instruction.json
+```
+
 Ground truth uses source filename plus zero-based PDF page metadata. It does not
 use chunk IDs because chunk IDs change when chunk size or overlap changes.
 

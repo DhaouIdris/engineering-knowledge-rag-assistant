@@ -51,6 +51,11 @@ def parse_args() -> argparse.Namespace:
         help="Search the corpus or oracle-filter to the FinanceBench evidence document.",
     )
     parser.add_argument("--embedding-model", default=None)
+    parser.add_argument(
+        "--query-prefix",
+        default="",
+        help="Prefix applied to retrieval queries only, without rebuilding document embeddings.",
+    )
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--rebuild-index", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
@@ -142,6 +147,7 @@ def evaluate_configuration(
     k: int,
     fetch_k: int,
     retrieval_scope: str,
+    query_prefix: str = "",
 ) -> dict[str, Any]:
     retriever = None
     source_lookup: dict[str, str] = {}
@@ -154,9 +160,10 @@ def evaluate_configuration(
 
     rows: list[dict[str, Any]] = []
     for example in dataset["examples"]:
+        retrieval_query = query_prefix + example["question"]
         started = perf_counter()
         if retrieval_scope == "corpus":
-            documents = retriever.invoke(example["question"])
+            documents = retriever.invoke(retrieval_query)
         else:
             expected_filenames = {
                 filename for filename, _ in example["relevant_locations"]
@@ -172,14 +179,14 @@ def evaluate_configuration(
             filter_fetch_k = int(store.index.ntotal)
             if search_type == "similarity":
                 documents = store.similarity_search(
-                    example["question"],
+                    retrieval_query,
                     k=k,
                     filter=metadata_filter,
                     fetch_k=filter_fetch_k,
                 )
             else:
                 documents = store.max_marginal_relevance_search(
-                    example["question"],
+                    retrieval_query,
                     k=k,
                     filter=metadata_filter,
                     fetch_k=filter_fetch_k,
@@ -208,6 +215,7 @@ def evaluate_configuration(
             "k": k,
             "fetch_k": fetch_k if search_type == "mmr" else None,
             "retrieval_scope": retrieval_scope,
+            "query_prefix": query_prefix,
         },
         "summary": {
             "questions": len(rows),
@@ -296,6 +304,7 @@ def main() -> None:
                 k=k,
                 fetch_k=args.fetch_k,
                 retrieval_scope=retrieval_scope,
+                query_prefix=args.query_prefix,
             )
             result["configuration"].update(
                 {"chunk_size": chunk_size, "chunk_overlap": chunk_overlap}
