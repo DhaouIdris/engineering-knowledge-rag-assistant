@@ -230,6 +230,36 @@ The caches are written under `storage/financebench/documents/`. Do not add
 `--rebuild-index` when resuming: valid document indexes will be loaded and only
 missing or changed PDFs will be rebuilt.
 
+### Retrieve broadly, then rerank precisely
+
+The dense bi-encoder embeds questions and chunks independently, which makes
+FAISS retrieval fast. A cross-encoder is slower but scores each `(question,
+chunk)` pair jointly. It is therefore applied only to the top dense candidates:
+
+```text
+dense similarity -> top 20 candidates -> cross-encoder -> top 5 or top 10
+```
+
+Compare the direct dense baseline with reranking without rebuilding any FAISS
+index:
+
+```powershell
+python .\scripts\evaluate_financebench_retrieval.py `
+  --retrieval-scope document --per-document-cache `
+  --embedding-model sentence-transformers/all-MiniLM-L6-v2 `
+  --search-type similarity rerank --k 5 10 `
+  --rerank-candidates 20 `
+  --reranker-model cross-encoder/ms-marco-MiniLM-L6-v2 `
+  --rerank-batch-size 16 --reranker-device cpu `
+  --page-tolerance 1 --evidence-ngram-size 5 `
+  --output evaluations/results/financebench_reranker.json
+```
+
+The first reranker run downloads its model through Sentence Transformers. The
+result file reports candidate-retrieval latency, reranking latency, and total
+latency separately. On a CUDA-enabled machine, `--reranker-device cuda` can be
+used instead.
+
 For a separate corpus-wide experiment, run all 150 questions and compare
 similarity search with MMR at three values of `k`:
 

@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.evaluation.financebench import load_financebench_dataset
 from app.evaluation.fusion import reciprocal_rank_fusion
 from app.evaluation.lexical import BM25Index
+from app.evaluation.reranking import CrossEncoderReranker
 from app.evaluation.retrieval import (
     evaluate_ranked_documents_by_locations,
     mean_metric,
@@ -42,7 +43,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-overlap", nargs="+", type=int, default=[64])
     parser.add_argument("--k", nargs="+", type=int, default=[3, 5, 10])
     parser.add_argument(
-        "--search-type", nargs="+", choices=("similarity", "mmr", "bm25", "rrf"), default=["similarity", "mmr"]
+        "--search-type",
+        nargs="+",
+        choices=("similarity", "mmr", "bm25", "rrf", "rerank"),
+        default=["similarity", "mmr"],
     )
     parser.add_argument("--fetch-k", type=int, default=20)
     parser.add_argument(
@@ -51,6 +55,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--page-tolerance", type=int, default=1)
     parser.add_argument("--evidence-ngram-size", type=int, default=5)
+    parser.add_argument(
+        "--reranker-model",
+        default="cross-encoder/ms-marco-MiniLM-L6-v2",
+    )
+    parser.add_argument("--rerank-candidates", type=int, default=20)
+    parser.add_argument("--rerank-batch-size", type=int, default=16)
+    parser.add_argument("--reranker-device", default=None)
     parser.add_argument(
         "--retrieval-scope",
         nargs="+",
@@ -264,6 +275,8 @@ def evaluate_configuration(
     rrf_candidates: int = 20,
     page_tolerance: int = 1,
     evidence_ngram_size: int = 5,
+    reranker: CrossEncoderReranker | None = None,
+    rerank_candidates: int = 20,
 ) -> dict[str, Any]:
     retriever = None
     source_lookup: dict[str, str] = {}
@@ -294,7 +307,7 @@ def evaluate_configuration(
     if retrieval_scope == "corpus":
         if store is None:
             raise ValueError("Corpus retrieval requires a shared index.")
-        if search_type not in ("bm25", "rrf"):
+        if search_type not in ("bm25", "rrf", "rerank"):
             retriever = make_retriever(store, search_type, k, fetch_k)
     elif document_stores is None:
         if store is None:
@@ -314,6 +327,10 @@ def evaluate_configuration(
                 documents = reciprocal_rank_fusion((dense, lexical), k=k)
             elif search_type == "bm25":
                 documents = lexical_index.search(example["question"], k)
+            elif search_type == "rerank":
+                documents = store.similarity_search(
+                    retrieval_query, k=rerank_candidates
+                )
             else:
                 documents = retriever.invoke(retrieval_query)
         else:
@@ -340,18 +357,30 @@ def evaluate_configuration(
                 raise ValueError(f"Indexed PDF not found: {expected_filename}")
             else:
                 active_store = document_store if document_store is not None else store
-                if search_type in ("similarity", "rrf"):
+                if search_type in ("similarity", "rrf", "rerank"):
                     if document_store is not None:
                         dense = active_store.similarity_search(
                             retrieval_query,
-                            k=rrf_candidates if search_type == "rrf" else k,
+                            k=(
+                                rrf_candidates
+                                if search_type == "rrf"
+                                else rerank_candidates
+                                if search_type == "rerank"
+                                else k
+                            ),
                         )
                     else:
                         metadata_filter = {"source": source_lookup[expected_filename]}
                         filter_fetch_k = int(active_store.index.ntotal)
                         dense = active_store.similarity_search(
                             retrieval_query,
-                            k=rrf_candidates if search_type == "rrf" else k,
+                            k=(
+                                rrf_candidates
+                                if search_type == "rrf"
+                                else rerank_candidates
+                                if search_type == "rerank"
+                                else k
+                            ),
                             filter=metadata_filter,
                             fetch_k=filter_fetch_k,
                         )
@@ -376,7 +405,15 @@ def evaluate_configuration(
                             filter=metadata_filter,
                             fetch_k=filter_fetch_k,
                         )
-        latency_ms = (perf_counter() - started) * 1000
+        retrieval_latency_ms = (perf_counter() - started) * 1000
+        reranking_latency_ms = 0.0
+        if search_type == "rerank":
+            if reranker is None:
+                raise ValueError("Rerank search requires a cross-encoder reranker.")
+            reranking_started = perf_counter()
+            documents = reranker.rerank(example["question"], documents, k=k)
+            reranking_latency_ms = (perf_counter() - reranking_started) * 1000
+        latency_ms = retrieval_latency_ms + reranking_latency_ms
         metrics = evaluate_ranked_documents_by_locations(
             documents,
             relevant_locations=example["relevant_locations"],
@@ -399,6 +436,8 @@ def evaluate_configuration(
                 "question_reasoning": example["question_reasoning"],
                 "evidence": example["evidence"],
                 "latency_ms": latency_ms,
+                "retrieval_latency_ms": retrieval_latency_ms,
+                "reranking_latency_ms": reranking_latency_ms,
                 **metrics,
             }
         )
@@ -410,6 +449,8 @@ def evaluate_configuration(
             "fetch_k": fetch_k if search_type == "mmr" else None,
             "rrf_candidates": rrf_candidates if search_type == "rrf" else None,
             "rrf_constant": 60 if search_type == "rrf" else None,
+            "reranker_model": reranker.model_name if search_type == "rerank" else None,
+            "rerank_candidates": rerank_candidates if search_type == "rerank" else None,
             "page_tolerance": page_tolerance,
             "evidence_ngram_size": evidence_ngram_size,
             "retrieval_scope": retrieval_scope,
@@ -432,6 +473,8 @@ def evaluate_configuration(
             "document_mrr": mean_metric(rows, "document_reciprocal_rank"),
             "redundancy_rate": mean_metric(rows, "redundancy_rate"),
             "mean_latency_ms": mean_metric(rows, "latency_ms"),
+            "mean_retrieval_latency_ms": mean_metric(rows, "retrieval_latency_ms"),
+            "mean_reranking_latency_ms": mean_metric(rows, "reranking_latency_ms"),
         },
         "questions": rows,
     }
@@ -439,7 +482,7 @@ def evaluate_configuration(
 
 def print_summary(result: dict[str, Any]) -> None:
     config, summary = result["configuration"], result["summary"]
-    print(
+    line = (
         "scope={retrieval_scope:<8} search={search_type:<10} k={k:<2} | Hit={hit_at_k:.3f} "
         "Precision={precision_at_k:.3f} Recall={recall_at_k:.3f} "
         "MRR={mrr:.3f} RelaxedHit={relaxed_hit_at_k:.3f} "
@@ -447,6 +490,12 @@ def print_summary(result: dict[str, Any]) -> None:
         "DocMRR={document_mrr:.3f} Redundancy={redundancy_rate:.3f} "
         "Latency={mean_latency_ms:.1f}ms".format(**config, **summary)
     )
+    if config["search_type"] == "rerank":
+        line += (
+            " (retrieval={mean_retrieval_latency_ms:.1f}ms, "
+            "rerank={mean_reranking_latency_ms:.1f}ms)"
+        ).format(**summary)
+    print(line)
 
 
 def main() -> None:
@@ -464,6 +513,10 @@ def main() -> None:
         raise SystemExit("--fetch-k must be greater than or equal to every k value for MMR.")
     if "rrf" in args.search_type and args.rrf_candidates < max(args.k):
         raise SystemExit("--rrf-candidates must be greater than or equal to every k value for RRF.")
+    if "rerank" in args.search_type and args.rerank_candidates < max(args.k):
+        raise SystemExit("--rerank-candidates must be greater than or equal to every k value.")
+    if args.rerank_batch_size <= 0:
+        raise SystemExit("--rerank-batch-size must be strictly positive.")
     if args.smoke_test and args.limit is None:
         raise SystemExit("--smoke-test requires --limit so it cannot be mistaken for a full benchmark.")
     if args.per_document_cache and set(args.retrieval_scope) != {"document"}:
@@ -489,6 +542,14 @@ def main() -> None:
         )
     model = args.embedding_model or settings.embedding_model
     embeddings = get_embeddings(args.embedding_model)
+    reranker = None
+    if "rerank" in args.search_type:
+        print(f"Loading reranker model: {args.reranker_model}", flush=True)
+        reranker = CrossEncoderReranker(
+            args.reranker_model,
+            batch_size=args.rerank_batch_size,
+            device=args.reranker_device,
+        )
     all_results: list[dict[str, Any]] = []
     pages: list[Any] | None = None
 
@@ -546,6 +607,8 @@ def main() -> None:
                 rrf_candidates=args.rrf_candidates,
                 page_tolerance=args.page_tolerance,
                 evidence_ngram_size=args.evidence_ngram_size,
+                reranker=reranker,
+                rerank_candidates=args.rerank_candidates,
             )
             result["configuration"].update(
                 {
