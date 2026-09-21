@@ -212,17 +212,36 @@ python .\scripts\evaluate_financebench_retrieval.py --limit 10 --smoke-test
 Smoke-test metrics are intentionally easier and must not be reported as full
 FinanceBench results. The smoke index uses a separate cache directory.
 
-Then run all 150 questions and compare similarity search with MMR at three
-values of `k`:
+### Resumable document-scoped evaluation
+
+For the complete 150-question document-scoped evaluation, use independent PDF
+indexes instead of building one index for all 368 files. Each PDF is saved as
+soon as it is embedded, so an interrupted run resumes from the completed files:
+
+```powershell
+python .\scripts\evaluate_financebench_retrieval.py `
+  --retrieval-scope document --per-document-cache `
+  --embedding-model sentence-transformers/all-MiniLM-L6-v2 `
+  --search-type similarity bm25 rrf --k 10 --rrf-candidates 20 `
+  --output evaluations/results/financebench_150_diagnostics.json
+```
+
+The caches are written under `storage/financebench/documents/`. Do not add
+`--rebuild-index` when resuming: valid document indexes will be loaded and only
+missing or changed PDFs will be rebuilt.
+
+For a separate corpus-wide experiment, run all 150 questions and compare
+similarity search with MMR at three values of `k`:
 
 ```powershell
 python .\scripts\evaluate_financebench_retrieval.py
 ```
 
-The first run loads the 368 PDFs, creates embeddings, and saves a local FAISS
-index under `storage/financebench/`. Later runs with the same embedding model,
-chunk size, overlap, and unchanged PDF corpus reuse that index. Both the cache
-and detailed results are ignored by Git.
+This corpus-wide command is intentionally much more expensive: its first run
+loads all 368 PDFs and saves one shared FAISS index under
+`storage/financebench/full/`. Later runs with the same embedding model, chunk
+size, overlap, and unchanged PDF corpus reuse that index. Both caches and
+detailed results are ignored by Git.
 
 Use a fixed MMR candidate pool so changing `k` does not silently change two
 variables at once:

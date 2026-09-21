@@ -66,6 +66,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--rebuild-index", action="store_true")
+    parser.add_argument(
+        "--per-document-cache",
+        action="store_true",
+        help=(
+            "For document-scope evaluation, build and persist one FAISS index per "
+            "evidence PDF. Completed PDFs are reusable after an interrupted run."
+        ),
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
         "--smoke-test",
@@ -95,6 +103,102 @@ def corpus_fingerprint(pdf_dir: Path, filenames: set[str] | None = None) -> str:
 def cache_path(cache_dir: Path, model: str, chunk_size: int, chunk_overlap: int) -> Path:
     safe_model = re.sub(r"[^a-zA-Z0-9._-]+", "_", model).strip("_")
     return cache_dir / f"{safe_model}__chunk-{chunk_size}__overlap-{chunk_overlap}"
+
+
+def document_cache_path(
+    cache_dir: Path,
+    model: str,
+    chunk_size: int,
+    chunk_overlap: int,
+    filename: str,
+) -> Path:
+    """Return a stable, collision-resistant cache path for one PDF."""
+    root = cache_path(cache_dir, model, chunk_size, chunk_overlap)
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", Path(filename).stem).strip("_")
+    suffix = hashlib.sha256(filename.encode()).hexdigest()[:10]
+    return root / f"{safe_name}__{suffix}"
+
+
+def load_or_build_document_stores(
+    *,
+    dataset: dict[str, Any],
+    embeddings: Any,
+    model: str,
+    pdf_dir: Path,
+    cache_dir: Path,
+    chunk_size: int,
+    chunk_overlap: int,
+    rebuild: bool,
+) -> tuple[dict[str, FAISS], int, int]:
+    """Load/build independent indexes, saving every PDF as soon as it finishes."""
+    filenames = sorted(
+        {
+            filename
+            for example in dataset["examples"]
+            for filename, _ in example["relevant_locations"]
+        },
+        key=str.lower,
+    )
+    stores: dict[str, FAISS] = {}
+    cache_hits = 0
+    total_chunks = 0
+
+    for position, filename in enumerate(filenames, start=1):
+        started = perf_counter()
+        target = document_cache_path(
+            cache_dir, model, chunk_size, chunk_overlap, filename
+        )
+        metadata_path = target / "metadata.json"
+        expected = {
+            "embedding_model": model,
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
+            "corpus_fingerprint": corpus_fingerprint(pdf_dir, {filename}),
+            "pdf_count": 1,
+            "document": filename,
+        }
+        cache_hit = False
+
+        if not rebuild and metadata_path.exists():
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if all(metadata.get(key) == value for key, value in expected.items()):
+                store = FAISS.load_local(
+                    str(target), embeddings, allow_dangerous_deserialization=True
+                )
+                chunk_count = int(metadata["chunk_count"])
+                cache_hit = True
+
+        if not cache_hit:
+            pages = load_documents(str(pdf_dir), filenames={filename})
+            if not pages:
+                raise ValueError(f"No PDF pages loaded for {filename}.")
+            chunks = build_chunks(pages, chunk_size, chunk_overlap)
+            print(
+                f"[{position}/{len(filenames)}] Embedding {filename}: "
+                f"{len(pages)} pages, {len(chunks)} chunks...",
+                flush=True,
+            )
+            store = FAISS.from_documents(chunks, embeddings)
+            chunk_count = len(chunks)
+            target.mkdir(parents=True, exist_ok=True)
+            store.save_local(str(target))
+            metadata_path.write_text(
+                json.dumps({**expected, "chunk_count": chunk_count}, indent=2),
+                encoding="utf-8",
+            )
+        else:
+            cache_hits += 1
+
+        stores[filename] = store
+        total_chunks += chunk_count
+        state = "cache" if cache_hit else "built"
+        print(
+            f"[{position}/{len(filenames)}] {filename}: {state}, {chunk_count} chunks "
+            f"({perf_counter() - started:.1f}s)",
+            flush=True,
+        )
+
+    return stores, cache_hits, total_chunks
 
 
 def load_or_build_store(
@@ -149,7 +253,8 @@ def load_or_build_store(
 
 def evaluate_configuration(
     *,
-    store: FAISS,
+    store: FAISS | None,
+    document_stores: dict[str, FAISS] | None = None,
     dataset: dict[str, Any],
     search_type: str,
     k: int,
@@ -165,10 +270,20 @@ def evaluate_configuration(
     lexical_index: BM25Index | None = None
     lexical_by_document: dict[str, BM25Index] = {}
     if search_type in ("bm25", "rrf"):
-        chunks = list(store.docstore._dict.values())
-        if retrieval_scope == "corpus":
+        if document_stores is not None:
+            lexical_by_document = {
+                filename: BM25Index(list(document_store.docstore._dict.values()))
+                for filename, document_store in document_stores.items()
+            }
+        elif retrieval_scope == "corpus":
+            if store is None:
+                raise ValueError("Corpus retrieval requires a shared index.")
+            chunks = list(store.docstore._dict.values())
             lexical_index = BM25Index(chunks)
         else:
+            if store is None:
+                raise ValueError("Document retrieval requires an index.")
+            chunks = list(store.docstore._dict.values())
             grouped: dict[str, list[Any]] = {}
             for chunk in chunks:
                 filename = source_basename(chunk.metadata.get("source"))
@@ -177,9 +292,13 @@ def evaluate_configuration(
                 filename: BM25Index(group) for filename, group in grouped.items()
             }
     if retrieval_scope == "corpus":
+        if store is None:
+            raise ValueError("Corpus retrieval requires a shared index.")
         if search_type not in ("bm25", "rrf"):
             retriever = make_retriever(store, search_type, k, fetch_k)
-    else:
+    elif document_stores is None:
+        if store is None:
+            raise ValueError("Document retrieval requires an index.")
         for document in store.docstore._dict.values():
             source = str(document.metadata.get("source", ""))
             source_lookup[source_basename(source)] = source
@@ -206,20 +325,36 @@ def evaluate_configuration(
                     "Document-scope evaluation currently requires exactly one evidence PDF."
                 )
             expected_filename = next(iter(expected_filenames))
+            document_store = (
+                document_stores.get(expected_filename)
+                if document_stores is not None
+                else None
+            )
+            if document_stores is not None and document_store is None:
+                raise ValueError(f"Indexed PDF not found: {expected_filename}")
             if search_type in ("bm25", "rrf") and expected_filename not in lexical_by_document:
                 raise ValueError(f"Indexed PDF not found: {expected_filename}")
             if search_type == "bm25":
                 documents = lexical_by_document[expected_filename].search(example["question"], k)
-            elif expected_filename not in source_lookup:
+            elif document_stores is None and expected_filename not in source_lookup:
                 raise ValueError(f"Indexed PDF not found: {expected_filename}")
             else:
-                metadata_filter = {"source": source_lookup[expected_filename]}
-                filter_fetch_k = int(store.index.ntotal)
+                active_store = document_store if document_store is not None else store
                 if search_type in ("similarity", "rrf"):
-                    dense = store.similarity_search(
-                        retrieval_query, k=rrf_candidates if search_type == "rrf" else k,
-                        filter=metadata_filter, fetch_k=filter_fetch_k,
-                    )
+                    if document_store is not None:
+                        dense = active_store.similarity_search(
+                            retrieval_query,
+                            k=rrf_candidates if search_type == "rrf" else k,
+                        )
+                    else:
+                        metadata_filter = {"source": source_lookup[expected_filename]}
+                        filter_fetch_k = int(active_store.index.ntotal)
+                        dense = active_store.similarity_search(
+                            retrieval_query,
+                            k=rrf_candidates if search_type == "rrf" else k,
+                            filter=metadata_filter,
+                            fetch_k=filter_fetch_k,
+                        )
                     if search_type == "rrf":
                         lexical = lexical_by_document[expected_filename].search(
                             example["question"], rrf_candidates
@@ -228,9 +363,19 @@ def evaluate_configuration(
                     else:
                         documents = dense
                 else:
-                    documents = store.max_marginal_relevance_search(
-                        retrieval_query, k=k, filter=metadata_filter, fetch_k=filter_fetch_k
-                    )
+                    if document_store is not None:
+                        documents = active_store.max_marginal_relevance_search(
+                            retrieval_query, k=k, fetch_k=fetch_k
+                        )
+                    else:
+                        metadata_filter = {"source": source_lookup[expected_filename]}
+                        filter_fetch_k = int(active_store.index.ntotal)
+                        documents = active_store.max_marginal_relevance_search(
+                            retrieval_query,
+                            k=k,
+                            filter=metadata_filter,
+                            fetch_k=filter_fetch_k,
+                        )
         latency_ms = (perf_counter() - started) * 1000
         metrics = evaluate_ranked_documents_by_locations(
             documents,
@@ -321,6 +466,8 @@ def main() -> None:
         raise SystemExit("--rrf-candidates must be greater than or equal to every k value for RRF.")
     if args.smoke_test and args.limit is None:
         raise SystemExit("--smoke-test requires --limit so it cannot be mistaken for a full benchmark.")
+    if args.per_document_cache and set(args.retrieval_scope) != {"document"}:
+        raise SystemExit("--per-document-cache requires --retrieval-scope document only.")
     if set(args.search_type) == {"bm25"} and args.query_prefix:
         raise SystemExit("--query-prefix has no effect when BM25 is the only search type.")
 
@@ -347,26 +494,49 @@ def main() -> None:
 
     for chunk_size, chunk_overlap in product(args.chunk_size, args.chunk_overlap):
         started = perf_counter()
-        store, cache_hit, chunk_count, pages = load_or_build_store(
-            pages=pages,
-            embeddings=embeddings,
-            model=model,
-            pdf_dir=pdf_dir,
-            cache_dir=cache_dir,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            rebuild=args.rebuild_index,
-            filenames=filenames,
-        )
-        print(
-            f"Index {'loaded from cache' if cache_hit else 'built'}: {chunk_count} chunks "
-            f"({perf_counter() - started:.1f}s)"
-        )
+        document_stores: dict[str, FAISS] | None = None
+        document_cache_hits: int | None = None
+        if args.per_document_cache:
+            document_stores, document_cache_hits, chunk_count = (
+                load_or_build_document_stores(
+                    dataset=dataset,
+                    embeddings=embeddings,
+                    model=model,
+                    pdf_dir=pdf_dir,
+                    cache_dir=Path(args.cache_dir) / "documents",
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    rebuild=args.rebuild_index,
+                )
+            )
+            store = None
+            print(
+                f"Document indexes ready: {len(document_stores)} PDFs, "
+                f"{document_cache_hits} cache hits, {chunk_count} chunks "
+                f"({perf_counter() - started:.1f}s)"
+            )
+        else:
+            store, cache_hit, chunk_count, pages = load_or_build_store(
+                pages=pages,
+                embeddings=embeddings,
+                model=model,
+                pdf_dir=pdf_dir,
+                cache_dir=cache_dir,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                rebuild=args.rebuild_index,
+                filenames=filenames,
+            )
+            print(
+                f"Index {'loaded from cache' if cache_hit else 'built'}: "
+                f"{chunk_count} chunks ({perf_counter() - started:.1f}s)"
+            )
         for retrieval_scope, search_type, k in product(
             args.retrieval_scope, args.search_type, args.k
         ):
             result = evaluate_configuration(
                 store=store,
+                document_stores=document_stores,
                 dataset=dataset,
                 search_type=search_type,
                 k=k,
@@ -378,7 +548,14 @@ def main() -> None:
                 evidence_ngram_size=args.evidence_ngram_size,
             )
             result["configuration"].update(
-                {"chunk_size": chunk_size, "chunk_overlap": chunk_overlap}
+                {
+                    "chunk_size": chunk_size,
+                    "chunk_overlap": chunk_overlap,
+                    "index_strategy": (
+                        "per_document" if document_stores is not None else "shared"
+                    ),
+                    "document_index_cache_hits": document_cache_hits,
+                }
             )
             all_results.append(result)
             print_summary(result)
