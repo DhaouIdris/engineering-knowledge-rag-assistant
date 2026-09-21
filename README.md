@@ -65,6 +65,11 @@ Detailed per-question results are written to
   chunks. Duplicate overlapping chunks from one page do not inflate recall.
 - **MRR**: reciprocal rank of the first chunk from a relevant page, averaged
   across questions.
+- **Relaxed Hit/Recall/MRR**: diagnostic variants accepting the same PDF page
+  or an adjacent page (`±1` by default). Strict page metrics remain primary.
+- **Evidence Hit/Coverage/MRR**: match normalized five-token sequences from
+  FinanceBench evidence text against retrieved chunks. This can reveal page
+  metadata offsets or extraction effects independently of exact page labels.
 - **Latency**: retrieval time per question; index construction is excluded.
 - **Document Hit@K / document MRR**: whether the correct PDF is retrieved and
   how highly its first chunk is ranked, independently from exact-page matching.

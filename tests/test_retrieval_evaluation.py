@@ -81,6 +81,49 @@ def test_diagnostics_include_text_and_separate_document_from_page_hit():
     assert result["retrieved"][0]["text_preview"] == "A financial table with revenue."
 
 
+def test_relaxed_metrics_accept_only_nearby_pages_from_the_same_document():
+    result = evaluate_ranked_documents_by_locations(
+        [document(11), document(10, "/data/another.pdf")],
+        relevant_locations={("manual.pdf", 10)},
+        k=2,
+        page_tolerance=1,
+    )
+
+    assert result["hit_at_k"] == 0.0
+    assert result["relaxed_hit_at_k"] == 1.0
+    assert result["relaxed_precision_at_k"] == 0.5
+    assert result["relaxed_recall_at_k"] == 1.0
+    assert result["relaxed_reciprocal_rank"] == 1.0
+    assert result["retrieved"][0]["relaxed_relevant"] is True
+    assert result["retrieved"][1]["relaxed_relevant"] is False
+
+
+def test_evidence_metrics_measure_normalized_ngram_coverage():
+    first = FakeDocument(
+        metadata={"page": 4, "source": "/data/manual.pdf"},
+        page_content="Unrelated introductory material.",
+    )
+    second = FakeDocument(
+        metadata={"page": 7, "source": "/data/manual.pdf"},
+        page_content="Revenue increased to $1,577 million during FY2018.",
+    )
+    result = evaluate_ranked_documents_by_locations(
+        [first, second],
+        relevant_locations={("manual.pdf", 10)},
+        k=2,
+        evidence_texts=[
+            ("manual.pdf", "Revenue increased to 1,577 million during FY2018 due to demand.")
+        ],
+        evidence_ngram_size=5,
+    )
+
+    assert result["hit_at_k"] == 0.0
+    assert result["evidence_hit_at_k"] == 1.0
+    assert result["evidence_coverage_at_k"] > 0.0
+    assert result["evidence_reciprocal_rank"] == 0.5
+    assert result["retrieved"][1]["evidence_text_match"] is True
+
+
 def test_same_page_from_another_document_is_not_relevant():
     result = evaluate_ranked_documents(
         [document(10, "/data/another.pdf")],

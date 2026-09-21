@@ -49,6 +49,8 @@ def parse_args() -> argparse.Namespace:
         "--rrf-candidates", type=int, default=20,
         help="Candidates from each of FAISS and BM25 before reciprocal rank fusion.",
     )
+    parser.add_argument("--page-tolerance", type=int, default=1)
+    parser.add_argument("--evidence-ngram-size", type=int, default=5)
     parser.add_argument(
         "--retrieval-scope",
         nargs="+",
@@ -155,6 +157,8 @@ def evaluate_configuration(
     retrieval_scope: str,
     query_prefix: str = "",
     rrf_candidates: int = 20,
+    page_tolerance: int = 1,
+    evidence_ngram_size: int = 5,
 ) -> dict[str, Any]:
     retriever = None
     source_lookup: dict[str, str] = {}
@@ -229,7 +233,16 @@ def evaluate_configuration(
                     )
         latency_ms = (perf_counter() - started) * 1000
         metrics = evaluate_ranked_documents_by_locations(
-            documents, relevant_locations=example["relevant_locations"], k=k
+            documents,
+            relevant_locations=example["relevant_locations"],
+            k=k,
+            page_tolerance=page_tolerance,
+            evidence_texts=[
+                (item["source"], item["evidence_text"])
+                for item in example["evidence"]
+                if item.get("evidence_text")
+            ],
+            evidence_ngram_size=evidence_ngram_size,
         )
         rows.append(
             {
@@ -252,6 +265,8 @@ def evaluate_configuration(
             "fetch_k": fetch_k if search_type == "mmr" else None,
             "rrf_candidates": rrf_candidates if search_type == "rrf" else None,
             "rrf_constant": 60 if search_type == "rrf" else None,
+            "page_tolerance": page_tolerance,
+            "evidence_ngram_size": evidence_ngram_size,
             "retrieval_scope": retrieval_scope,
             "query_prefix": query_prefix,
         },
@@ -262,6 +277,12 @@ def evaluate_configuration(
             "unique_page_precision_at_k": mean_metric(rows, "unique_page_precision_at_k"),
             "recall_at_k": mean_metric(rows, "recall_at_k"),
             "mrr": mean_metric(rows, "reciprocal_rank"),
+            "relaxed_hit_at_k": mean_metric(rows, "relaxed_hit_at_k"),
+            "relaxed_recall_at_k": mean_metric(rows, "relaxed_recall_at_k"),
+            "relaxed_mrr": mean_metric(rows, "relaxed_reciprocal_rank"),
+            "evidence_hit_at_k": mean_metric(rows, "evidence_hit_at_k"),
+            "evidence_coverage_at_k": mean_metric(rows, "evidence_coverage_at_k"),
+            "evidence_mrr": mean_metric(rows, "evidence_reciprocal_rank"),
             "document_hit_at_k": mean_metric(rows, "document_hit_at_k"),
             "document_mrr": mean_metric(rows, "document_reciprocal_rank"),
             "redundancy_rate": mean_metric(rows, "redundancy_rate"),
@@ -276,7 +297,8 @@ def print_summary(result: dict[str, Any]) -> None:
     print(
         "scope={retrieval_scope:<8} search={search_type:<10} k={k:<2} | Hit={hit_at_k:.3f} "
         "Precision={precision_at_k:.3f} Recall={recall_at_k:.3f} "
-        "MRR={mrr:.3f} DocHit={document_hit_at_k:.3f} "
+        "MRR={mrr:.3f} RelaxedHit={relaxed_hit_at_k:.3f} "
+        "EvidenceHit={evidence_hit_at_k:.3f} DocHit={document_hit_at_k:.3f} "
         "DocMRR={document_mrr:.3f} Redundancy={redundancy_rate:.3f} "
         "Latency={mean_latency_ms:.1f}ms".format(**config, **summary)
     )
@@ -289,6 +311,10 @@ def main() -> None:
     pdf_dir = Path(args.pdf_dir) if args.pdf_dir else benchmark_dir / "pdfs"
     if any(k <= 0 for k in args.k):
         raise SystemExit("Every k value must be strictly positive.")
+    if args.page_tolerance < 0:
+        raise SystemExit("--page-tolerance must be nonnegative.")
+    if args.evidence_ngram_size <= 0:
+        raise SystemExit("--evidence-ngram-size must be strictly positive.")
     if "mmr" in args.search_type and args.fetch_k < max(args.k):
         raise SystemExit("--fetch-k must be greater than or equal to every k value for MMR.")
     if "rrf" in args.search_type and args.rrf_candidates < max(args.k):
@@ -348,6 +374,8 @@ def main() -> None:
                 retrieval_scope=retrieval_scope,
                 query_prefix=args.query_prefix,
                 rrf_candidates=args.rrf_candidates,
+                page_tolerance=args.page_tolerance,
+                evidence_ngram_size=args.evidence_ngram_size,
             )
             result["configuration"].update(
                 {"chunk_size": chunk_size, "chunk_overlap": chunk_overlap}

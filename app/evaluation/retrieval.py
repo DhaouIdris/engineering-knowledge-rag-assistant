@@ -8,6 +8,7 @@ page remains stable across those experiments.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -67,6 +68,9 @@ def evaluate_ranked_documents_by_locations(
     *,
     relevant_locations: set[tuple[str, int]],
     k: int,
+    page_tolerance: int = 1,
+    evidence_texts: Sequence[tuple[str, str]] | None = None,
+    evidence_ngram_size: int = 5,
 ) -> dict[str, Any]:
     """Evaluate retrieval against ``(source filename, zero-based page)`` pairs.
 
@@ -78,15 +82,36 @@ def evaluate_ranked_documents_by_locations(
         raise ValueError("k must be strictly positive.")
     if not relevant_locations:
         raise ValueError("relevant_locations must not be empty.")
+    if page_tolerance < 0:
+        raise ValueError("page_tolerance must be nonnegative.")
+    if evidence_ngram_size <= 0:
+        raise ValueError("evidence_ngram_size must be strictly positive.")
+
+    def text_ngrams(text: str) -> set[tuple[str, ...]]:
+        tokens = re.findall(r"[a-z]+|\d+(?:\.\d+)?", text.lower().replace(",", ""))
+        return {
+            tuple(tokens[index : index + evidence_ngram_size])
+            for index in range(len(tokens) - evidence_ngram_size + 1)
+        }
+
+    evidence_ngrams: set[tuple[str, tuple[str, ...]]] = set()
+    for filename, text in evidence_texts or []:
+        evidence_ngrams.update(
+            (source_basename(filename), ngram) for ngram in text_ngrams(text)
+        )
 
     ranked = list(documents[:k])
     relevant_ranks: list[int] = []
+    relaxed_relevant_ranks: list[int] = []
     relevant_document_ranks: list[int] = []
+    evidence_ranks: list[int] = []
     relevant_filenames = {filename for filename, _ in relevant_locations}
     pages_by_filename: dict[str, set[int]] = {}
     for filename, page in relevant_locations:
         pages_by_filename.setdefault(filename, set()).add(page)
     matched_locations: set[tuple[str, int]] = set()
+    relaxed_matched_locations: set[tuple[str, int]] = set()
+    matched_evidence_ngrams: set[tuple[str, tuple[str, ...]]] = set()
     retrieved_locations: set[tuple[str, int]] = set()
     retrieved: list[dict[str, Any]] = []
 
@@ -97,9 +122,20 @@ def evaluate_ranked_documents_by_locations(
         location = (filename, page) if isinstance(page, int) else None
         is_relevant = location in relevant_locations if location else False
         is_relevant_document = filename in relevant_filenames
+        relaxed_matches: set[tuple[str, int]] = set()
         page_distance = None
         if isinstance(page, int) and is_relevant_document:
             page_distance = min(abs(page - expected) for expected in pages_by_filename[filename])
+            relaxed_matches = {
+                (filename, expected)
+                for expected in pages_by_filename[filename]
+                if abs(page - expected) <= page_tolerance
+            }
+        content = str(getattr(document, "page_content", "") or "")
+        document_evidence_ngrams = {
+            (filename, ngram) for ngram in text_ngrams(content)
+        }
+        evidence_matches = document_evidence_ngrams & evidence_ngrams
 
         if location:
             retrieved_locations.add(location)
@@ -108,6 +144,12 @@ def evaluate_ranked_documents_by_locations(
         if is_relevant:
             relevant_ranks.append(rank)
             matched_locations.add(location)
+        if relaxed_matches:
+            relaxed_relevant_ranks.append(rank)
+            relaxed_matched_locations.update(relaxed_matches)
+        if evidence_matches:
+            evidence_ranks.append(rank)
+            matched_evidence_ngrams.update(evidence_matches)
 
         retrieved.append(
             {
@@ -116,7 +158,9 @@ def evaluate_ranked_documents_by_locations(
                 "loader_page_index": page,
                 "pdf_page_number": page + 1 if isinstance(page, int) else None,
                 "relevant": is_relevant,
+                "relaxed_relevant": bool(relaxed_matches),
                 "relevant_document": is_relevant_document,
+                "evidence_text_match": bool(evidence_matches),
                 "distance_to_nearest_relevant_page": page_distance,
                 "text_preview": " ".join(
                     str(getattr(document, "page_content", "") or "").split()
@@ -135,6 +179,21 @@ def evaluate_ranked_documents_by_locations(
         ),
         "recall_at_k": len(matched_locations) / len(relevant_locations),
         "reciprocal_rank": 1.0 / relevant_ranks[0] if relevant_ranks else 0.0,
+        "relaxed_hit_at_k": 1.0 if relaxed_relevant_ranks else 0.0,
+        "relaxed_precision_at_k": (
+            len(relaxed_relevant_ranks) / retrieved_count if retrieved_count else 0.0
+        ),
+        "relaxed_recall_at_k": len(relaxed_matched_locations) / len(relevant_locations),
+        "relaxed_reciprocal_rank": (
+            1.0 / relaxed_relevant_ranks[0] if relaxed_relevant_ranks else 0.0
+        ),
+        "page_tolerance": page_tolerance,
+        "evidence_hit_at_k": 1.0 if evidence_ranks else 0.0,
+        "evidence_coverage_at_k": (
+            len(matched_evidence_ngrams) / len(evidence_ngrams) if evidence_ngrams else 0.0
+        ),
+        "evidence_reciprocal_rank": 1.0 / evidence_ranks[0] if evidence_ranks else 0.0,
+        "evidence_ngram_size": evidence_ngram_size,
         "document_hit_at_k": 1.0 if relevant_document_ranks else 0.0,
         "document_reciprocal_rank": (
             1.0 / relevant_document_ranks[0] if relevant_document_ranks else 0.0
