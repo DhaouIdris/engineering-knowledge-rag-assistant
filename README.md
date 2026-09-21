@@ -137,6 +137,24 @@ latency includes both searches but excludes BM25 index construction. These
 ten questions and the oracle document filter provide a quick experiment,
 not a full-corpus benchmark; document hit is 1 by construction.
 
+Before scaling the experiment to all 150 questions, screen a stronger compact
+embedding model on the same ten questions. BGE applies its retrieval instruction
+only to dense queries; BM25 continues to receive the original question:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\evaluate_financebench_retrieval.py `
+  --limit 10 --smoke-test --retrieval-scope document `
+  --embedding-model BAAI/bge-small-en-v1.5 `
+  --query-prefix "Represent this sentence for searching relevant passages: " `
+  --search-type similarity bm25 rrf --k 3 5 10 `
+  --rrf-candidates 20 `
+  --output evaluations/results/financebench_bge_screen.json
+```
+
+Keep BGE for the larger run only if it improves Hit@10 by at least 0.10 or MRR
+by at least 0.05 over MiniLM on this fixed smoke set. This is a screening rule,
+not a statistical conclusion; final model selection uses all 150 questions.
+
 Ground truth uses source filename plus zero-based PDF page metadata. It does not
 use chunk IDs because chunk IDs change when chunk size or overlap changes.
 
