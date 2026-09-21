@@ -295,8 +295,8 @@ def main() -> None:
         raise SystemExit("--rrf-candidates must be greater than or equal to every k value for RRF.")
     if args.smoke_test and args.limit is None:
         raise SystemExit("--smoke-test requires --limit so it cannot be mistaken for a full benchmark.")
-    if "bm25" in args.search_type and args.query_prefix:
-        raise SystemExit("--query-prefix applies only to embedding search, not BM25.")
+    if set(args.search_type) == {"bm25"} and args.query_prefix:
+        raise SystemExit("--query-prefix has no effect when BM25 is the only search type.")
 
     dataset = load_financebench_dataset(questions, pdf_dir, limit=args.limit)
     filenames = None
