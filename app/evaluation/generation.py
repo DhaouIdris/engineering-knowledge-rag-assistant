@@ -14,6 +14,7 @@ CITATION_PATTERN = re.compile(r"\[S(\d+)\]", re.IGNORECASE)
 NUMBER_PATTERN = re.compile(r"(?<![A-Za-z])[-+]?\$?\d[\d,]*(?:\.\d+)?%?")
 TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:\.[0-9]+)?")
 REFUSAL_MARKER = "INSUFFICIENT_CONTEXT"
+REFUSAL_PATTERN = re.compile(r"^\s*INSUFFICIENT(?:_|\s+)CONTEXT\b", re.IGNORECASE)
 
 
 def stratified_sample(
@@ -74,12 +75,19 @@ def build_grounded_prompt(question: str, context: str) -> str:
     return f"""You are a financial document question-answering assistant.
 
 Use only the supplied sources. Do not rely on outside knowledge.
-Answer in English and be concise, while showing essential arithmetic when a
-calculation is required. Cite every factual statement with one or more source
-labels such as [S1] or [S2]. Never invent a source label.
+First decide whether the sources contain every fact or number needed to answer.
+A source is sufficient even when it uses different wording from the question.
+If the needed inputs are present, perform the requested arithmetic yourself;
+do not refuse merely because the final calculated metric is not written out.
 
-If the sources do not contain enough information to answer reliably, begin the
-answer with exactly {REFUSAL_MARKER} and briefly state what is missing.
+When the evidence is sufficient, answer the question directly in the first
+sentence. Answer in English and be concise, showing essential arithmetic when
+required. Cite every factual statement with one or more source labels such as
+[S1] or [S2]. Never invent a source label.
+
+Only when at least one required fact or number is absent, begin the answer with
+exactly {REFUSAL_MARKER} and briefly state what is missing. Do not put a space
+between INSUFFICIENT and CONTEXT.
 
 Question:
 {question}
@@ -209,7 +217,7 @@ def evaluate_answer(
     *,
     context_evidence_hit: bool,
 ) -> dict[str, float | None]:
-    refused = answer.lstrip().upper().startswith(REFUSAL_MARKER)
+    refused = bool(REFUSAL_PATTERN.match(answer))
     metrics: dict[str, float | None] = {
         "exact_match": exact_match(answer, reference),
         "token_f1": token_f1(answer, reference),

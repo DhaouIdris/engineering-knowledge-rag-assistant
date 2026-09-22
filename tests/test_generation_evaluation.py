@@ -92,3 +92,24 @@ def test_refusal_is_appropriate_when_retrieved_context_has_no_evidence():
 
     assert metrics["refusal"] == 1.0
     assert metrics["evidence_action_alignment"] == 1.0
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "INSUFFICIENT_CONTEXT The required balance sheet is missing.",
+        "INSUFFICIENT CONTEXT\nThe required balance sheet is missing.",
+        "  insufficient context: the required balance sheet is missing.",
+    ],
+)
+def test_refusal_detection_accepts_common_model_variants(answer):
+    metrics = evaluate_answer(
+        answer,
+        "42",
+        [],
+        {("report.pdf", 4)},
+        context_evidence_hit=False,
+    )
+
+    assert metrics["refusal"] == 1.0
+    assert metrics["evidence_action_alignment"] == 1.0
