@@ -110,6 +110,7 @@ def expand_with_same_page_chunks(
     if docstore is None:
         return selected
 
+    candidates_by_location: dict[tuple[str, int], list[Any]] = defaultdict(list)
     for document_id in index_to_id.values():
         candidate = docstore.search(document_id)
         if not hasattr(candidate, "metadata"):
@@ -118,12 +119,20 @@ def expand_with_same_page_chunks(
             source_basename(candidate.metadata.get("source")),
             candidate.metadata.get("page"),
         )
-        key = (*location, str(candidate.page_content or ""))
-        if location in target_pages and key not in selected_keys:
+        if location in target_pages:
+            candidates_by_location[location].append(candidate)
+
+    # Preserve retrieval priority: exhaust companions from the highest-ranked
+    # page before lower-ranked pages can consume the context budget.
+    for location in target_pages:
+        for candidate in candidates_by_location[location]:
+            key = (*location, str(candidate.page_content or ""))
+            if key in selected_keys:
+                continue
             selected.append(candidate)
             selected_keys.add(key)
             if len(selected) >= max_documents:
-                break
+                return selected
     return selected
 
 
@@ -225,7 +234,11 @@ def citation_metrics(
     relevant_locations: set[tuple[str, int]],
     *,
     page_tolerance: int = 1,
+    evidence_texts: Sequence[tuple[str, str]] | None = None,
+    evidence_ngram_size: int = 5,
 ) -> dict[str, float]:
+    if evidence_ngram_size <= 0:
+        raise ValueError("evidence_ngram_size must be strictly positive.")
     cited_numbers = {int(value) for value in CITATION_PATTERN.findall(answer)}
     valid_numbers = {value for value in cited_numbers if 1 <= value <= len(sources)}
     cited_sources = [sources[value - 1] for value in sorted(valid_numbers)]
@@ -251,6 +264,22 @@ def citation_metrics(
     )
     sentences = _substantive_sentences(answer)
     cited_sentences = sum(bool(CITATION_PATTERN.search(sentence)) for sentence in sentences)
+    evidence_ngrams: set[tuple[str, tuple[str, ...]]] = set()
+    for filename, text in evidence_texts or []:
+        tokens = answer_tokens(text)
+        evidence_ngrams.update(
+            (source_basename(filename), tuple(tokens[index : index + evidence_ngram_size]))
+            for index in range(len(tokens) - evidence_ngram_size + 1)
+        )
+    cited_evidence_ngrams: set[tuple[str, tuple[str, ...]]] = set()
+    for source in cited_sources:
+        filename = source_basename(source.get("source"))
+        tokens = answer_tokens(str(source.get("content") or ""))
+        source_ngrams = {
+            (filename, tuple(tokens[index : index + evidence_ngram_size]))
+            for index in range(len(tokens) - evidence_ngram_size + 1)
+        }
+        cited_evidence_ngrams.update(source_ngrams & evidence_ngrams)
     valid_count = len(valid_numbers)
     citation_count = len(cited_numbers)
     return {
@@ -267,6 +296,12 @@ def citation_metrics(
         ),
         "citation_ground_truth_hit": float(bool(exact_matches)),
         "relaxed_citation_ground_truth_hit": float(bool(relaxed_matches)),
+        "citation_evidence_hit": float(bool(cited_evidence_ngrams)),
+        "citation_evidence_coverage": (
+            len(cited_evidence_ngrams) / len(evidence_ngrams)
+            if evidence_ngrams
+            else 0.0
+        ),
     }
 
 
@@ -277,6 +312,7 @@ def evaluate_answer(
     relevant_locations: set[tuple[str, int]],
     *,
     context_evidence_hit: bool,
+    evidence_texts: Sequence[tuple[str, str]] | None = None,
 ) -> dict[str, float | None]:
     refused = bool(REFUSAL_PATTERN.match(answer))
     metrics: dict[str, float | None] = {
@@ -288,7 +324,14 @@ def evaluate_answer(
             (context_evidence_hit and not refused) or (not context_evidence_hit and refused)
         ),
     }
-    metrics.update(citation_metrics(answer, sources, relevant_locations))
+    metrics.update(
+        citation_metrics(
+            answer,
+            sources,
+            relevant_locations,
+            evidence_texts=evidence_texts,
+        )
+    )
     return metrics
 
 

@@ -88,6 +88,26 @@ def test_context_expansion_adds_companion_chunks_from_top_page_only():
     ]
 
 
+def test_context_expansion_prioritizes_the_highest_ranked_page():
+    top = FakeDocument("top result", {"source": "report.pdf", "page": 9})
+    lower = FakeDocument("lower result", {"source": "report.pdf", "page": 1})
+    top_companion = FakeDocument("needed row", {"source": "report.pdf", "page": 9})
+    lower_companion = FakeDocument("old note", {"source": "report.pdf", "page": 1})
+    store = FakeStore(
+        {"a": lower, "b": lower_companion, "c": top, "d": top_companion}
+    )
+
+    expanded = expand_with_same_page_chunks(
+        [top, lower], store, top_pages=2, max_documents=3
+    )
+
+    assert [document.page_content for document in expanded] == [
+        "top result",
+        "lower result",
+        "needed row",
+    ]
+
+
 def test_answer_similarity_and_numeric_metrics_are_deterministic():
     assert exact_match("$1,577.00 [S1]", "$1577.00") == 1.0
     assert token_f1("Revenue increased strongly", "Revenue increased") == pytest.approx(
@@ -113,6 +133,30 @@ def test_citation_metrics_validate_labels_and_ground_truth_pages():
     assert metrics["citation_ground_truth_precision"] == 1.0
     assert metrics["citation_ground_truth_recall"] == 1.0
     assert metrics["citation_ground_truth_hit"] == 1.0
+
+
+def test_citation_evidence_hit_accepts_same_evidence_on_an_alternative_page():
+    sources = [
+        {
+            "source": "report.pdf",
+            "loader_page_index": 8,
+            "content": "The company generated 13.2 billion in cash proceeds from the offering.",
+        }
+    ]
+    metrics = citation_metrics(
+        "Cash proceeds were $13.2 billion [S1].",
+        sources,
+        {("report.pdf", 4)},
+        evidence_texts=[
+            (
+                "report.pdf",
+                "The company secured 13.2 billion in cash proceeds from the offering.",
+            )
+        ],
+    )
+
+    assert metrics["citation_ground_truth_hit"] == 0.0
+    assert metrics["citation_evidence_hit"] == 1.0
 
 
 def test_refusal_is_appropriate_when_retrieved_context_has_no_evidence():

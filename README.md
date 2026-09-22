@@ -298,8 +298,10 @@ answers should intentionally be regenerated.
 The report separates retrieval and generation latency and includes normalized
 exact match, token F1, numeric recall, refusal behavior, citation validity,
 sentence citation coverage, and strict/relaxed citation agreement with the
-FinanceBench evidence pages. These are deterministic diagnostics rather than a
-claim of complete semantic faithfulness; qualitative review remains necessary.
+FinanceBench evidence pages. It also reports lexical evidence support for valid
+citations, since the same fact can appear on a different page from the benchmark
+annotation. These are deterministic diagnostics rather than a claim of complete
+semantic faithfulness; qualitative review remains necessary.
 
 For a separate corpus-wide experiment, run all 150 questions and compare
 similarity search with MMR at three values of `k`:

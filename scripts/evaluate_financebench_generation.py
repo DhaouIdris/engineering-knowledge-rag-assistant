@@ -33,7 +33,7 @@ from app.evaluation.retrieval import evaluate_ranked_documents_by_locations
 from scripts.evaluate_financebench_retrieval import load_or_build_document_stores
 
 
-PROMPT_VERSION = "financebench_grounded_v3"
+PROMPT_VERSION = "financebench_grounded_v4"
 PAGE_TOLERANCE = 1
 EVIDENCE_NGRAM_SIZE = 5
 GENERATION_METRICS = (
@@ -49,6 +49,8 @@ GENERATION_METRICS = (
     "citation_ground_truth_recall",
     "citation_ground_truth_hit",
     "relaxed_citation_ground_truth_hit",
+    "citation_evidence_hit",
+    "citation_evidence_coverage",
 )
 
 
@@ -304,6 +306,11 @@ def main() -> None:
             sources,
             example["relevant_locations"],
             context_evidence_hit=bool(retrieval_metrics["evidence_hit_at_k"]),
+            evidence_texts=[
+                (item["source"], item["evidence_text"])
+                for item in example["evidence"]
+                if item.get("evidence_text")
+            ],
         )
         row = {
             "run_signature": signature,
