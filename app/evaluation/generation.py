@@ -71,6 +71,62 @@ def format_context(documents: Sequence[Any]) -> tuple[str, list[dict[str, Any]]]
     return "\n\n".join(blocks), sources
 
 
+def expand_with_same_page_chunks(
+    documents: Sequence[Any],
+    store: Any,
+    *,
+    top_pages: int = 3,
+    max_documents: int = 20,
+) -> list[Any]:
+    """Add companion chunks from the pages of the highest-ranked results.
+
+    Financial tables are frequently split into several chunks even though all
+    rows belong to one PDF page. Retrieval ranking remains based on the original
+    results; this function only expands the context given to the generator.
+    """
+    if top_pages <= 0 or max_documents <= 0:
+        return list(documents)[:max_documents]
+
+    selected = list(documents)[:max_documents]
+    selected_keys = {
+        (
+            source_basename(document.metadata.get("source")),
+            document.metadata.get("page"),
+            str(document.page_content or ""),
+        )
+        for document in selected
+    }
+    target_pages: list[tuple[str, int]] = []
+    for document in documents:
+        page = document.metadata.get("page")
+        location = (source_basename(document.metadata.get("source")), page)
+        if isinstance(page, int) and location not in target_pages:
+            target_pages.append(location)
+        if len(target_pages) >= top_pages:
+            break
+
+    docstore = getattr(store, "docstore", None)
+    index_to_id = getattr(store, "index_to_docstore_id", {})
+    if docstore is None:
+        return selected
+
+    for document_id in index_to_id.values():
+        candidate = docstore.search(document_id)
+        if not hasattr(candidate, "metadata"):
+            continue
+        location = (
+            source_basename(candidate.metadata.get("source")),
+            candidate.metadata.get("page"),
+        )
+        key = (*location, str(candidate.page_content or ""))
+        if location in target_pages and key not in selected_keys:
+            selected.append(candidate)
+            selected_keys.add(key)
+            if len(selected) >= max_documents:
+                break
+    return selected
+
+
 def build_grounded_prompt(question: str, context: str) -> str:
     return f"""You are a financial document question-answering assistant.
 
@@ -83,7 +139,12 @@ do not refuse merely because the final calculated metric is not written out.
 When the evidence is sufficient, answer the question directly in the first
 sentence. Answer in English and be concise, showing essential arithmetic when
 required. Cite every factual statement with one or more source labels such as
-[S1] or [S2]. Never invent a source label.
+[S1] or [S2]. Every non-refusal answer must contain at least one citation.
+Never invent a source label. Before returning a non-refusal answer, verify that
+it contains a bracketed source label.
+
+Example of the required answer format:
+Revenue was $10 million [S1].
 
 Only when at least one required fact or number is absent, begin the answer with
 exactly {REFUSAL_MARKER} and briefly state what is missing. Do not put a space

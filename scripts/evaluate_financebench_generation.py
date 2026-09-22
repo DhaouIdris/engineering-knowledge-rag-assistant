@@ -24,6 +24,7 @@ from app.evaluation.financebench import load_financebench_dataset
 from app.evaluation.generation import (
     build_grounded_prompt,
     evaluate_answer,
+    expand_with_same_page_chunks,
     format_context,
     mean_available,
     stratified_sample,
@@ -32,7 +33,7 @@ from app.evaluation.retrieval import evaluate_ranked_documents_by_locations
 from scripts.evaluate_financebench_retrieval import load_or_build_document_stores
 
 
-PROMPT_VERSION = "financebench_grounded_v2"
+PROMPT_VERSION = "financebench_grounded_v3"
 PAGE_TOLERANCE = 1
 EVIDENCE_NGRAM_SIZE = 5
 GENERATION_METRICS = (
@@ -62,6 +63,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chunk-size", type=int, default=512)
     parser.add_argument("--chunk-overlap", type=int, default=64)
     parser.add_argument("--k", type=int, default=10)
+    parser.add_argument("--expand-top-pages", type=int, default=3)
+    parser.add_argument("--max-context-chunks", type=int, default=20)
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--samples-per-type", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
@@ -92,6 +95,8 @@ def run_signature(arguments: argparse.Namespace, selected_ids: list[str]) -> str
         "chunk_size": arguments.chunk_size,
         "chunk_overlap": arguments.chunk_overlap,
         "k": arguments.k,
+        "expand_top_pages": arguments.expand_top_pages,
+        "max_context_chunks": arguments.max_context_chunks,
         "samples_per_type": arguments.samples_per_type,
         "seed": arguments.seed,
         "ollama_model": arguments.ollama_model,
@@ -194,6 +199,10 @@ def main() -> None:
     args = parse_args()
     if args.k <= 0:
         raise SystemExit("--k must be strictly positive.")
+    if args.expand_top_pages < 0 or args.max_context_chunks <= 0:
+        raise SystemExit(
+            "--expand-top-pages must be nonnegative and --max-context-chunks positive."
+        )
     if args.samples_per_type <= 0:
         raise SystemExit("--samples-per-type must be strictly positive.")
     if args.chunk_size <= 0 or not 0 <= args.chunk_overlap < args.chunk_size:
@@ -277,7 +286,13 @@ def main() -> None:
             ],
             evidence_ngram_size=EVIDENCE_NGRAM_SIZE,
         )
-        context, sources = format_context(documents)
+        context_documents = expand_with_same_page_chunks(
+            documents,
+            stores[expected_filename],
+            top_pages=args.expand_top_pages,
+            max_documents=args.max_context_chunks,
+        )
+        context, sources = format_context(context_documents)
         prompt = build_grounded_prompt(example["question"], context)
 
         generation_started = perf_counter()
@@ -331,6 +346,8 @@ def main() -> None:
         "chunk_overlap": args.chunk_overlap,
         "search_type": "similarity",
         "k": args.k,
+        "expand_top_pages": args.expand_top_pages,
+        "max_context_chunks": args.max_context_chunks,
         "samples_per_type": args.samples_per_type,
         "seed": args.seed,
         "ollama_model": args.ollama_model,

@@ -265,7 +265,11 @@ used instead.
 Retrieval metrics do not show whether the LLM uses context correctly. The
 generation evaluator selects an equal number of `domain-relevant`,
 `metrics-generated`, and `novel-generated` questions, retrieves ten chunks, and
-asks Ollama for an answer with source labels such as `[S1]`.
+asks Ollama for an answer with source labels such as `[S1]`. Because financial
+tables are often split across chunks, the generator also adds companion chunks
+from the pages represented by the three highest-ranked results. Control this
+with `--expand-top-pages` and `--max-context-chunks`; retrieval metrics are still
+computed only from the original ranked results.
 
 First verify the complete pipeline on three questions (one per type):
 

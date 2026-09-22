@@ -6,6 +6,7 @@ from app.evaluation.generation import (
     citation_metrics,
     evaluate_answer,
     exact_match,
+    expand_with_same_page_chunks,
     format_context,
     numeric_recall,
     stratified_sample,
@@ -17,6 +18,23 @@ from app.evaluation.generation import (
 class FakeDocument:
     page_content: str
     metadata: dict = field(default_factory=dict)
+
+
+class FakeDocstore:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def search(self, document_id):
+        return self.documents[document_id]
+
+
+@dataclass
+class FakeStore:
+    documents: dict
+
+    def __post_init__(self):
+        self.docstore = FakeDocstore(self.documents)
+        self.index_to_docstore_id = dict(enumerate(self.documents))
 
 
 def test_stratified_sample_is_balanced_and_reproducible():
@@ -52,6 +70,22 @@ def test_format_context_creates_stable_source_labels():
     assert "[S1] report.pdf, PDF page 5" in context
     assert "[S2] report.pdf, PDF page 9" in context
     assert sources[0]["loader_page_index"] == 4
+
+
+def test_context_expansion_adds_companion_chunks_from_top_page_only():
+    first = FakeDocument("assets", {"source": "report.pdf", "page": 4})
+    companion = FakeDocument("liabilities", {"source": "report.pdf", "page": 4})
+    unrelated = FakeDocument("notes", {"source": "report.pdf", "page": 8})
+    store = FakeStore({"a": first, "b": companion, "c": unrelated})
+
+    expanded = expand_with_same_page_chunks(
+        [first], store, top_pages=1, max_documents=5
+    )
+
+    assert [document.page_content for document in expanded] == [
+        "assets",
+        "liabilities",
+    ]
 
 
 def test_answer_similarity_and_numeric_metrics_are_deterministic():
