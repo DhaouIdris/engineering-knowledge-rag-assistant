@@ -260,6 +260,43 @@ result file reports candidate-retrieval latency, reranking latency, and total
 latency separately. On a CUDA-enabled machine, `--reranker-device cuda` can be
 used instead.
 
+### Evaluate grounded answer generation
+
+Retrieval metrics do not show whether the LLM uses context correctly. The
+generation evaluator selects an equal number of `domain-relevant`,
+`metrics-generated`, and `novel-generated` questions, retrieves ten chunks, and
+asks Ollama for an answer with source labels such as `[S1]`.
+
+First verify the complete pipeline on three questions (one per type):
+
+```powershell
+python .\scripts\evaluate_financebench_generation.py `
+  --samples-per-type 1 --k 10 `
+  --ollama-model llama3.2 `
+  --checkpoint evaluations/results/generation_smoke_checkpoint.jsonl `
+  --output evaluations/results/generation_smoke.json
+```
+
+Then evaluate the fixed 30-question stratified sample:
+
+```powershell
+python .\scripts\evaluate_financebench_generation.py `
+  --samples-per-type 10 --seed 42 --k 10 `
+  --ollama-model llama3.2 `
+  --checkpoint evaluations/results/financebench_generation_checkpoint.jsonl `
+  --output evaluations/results/financebench_generation.json
+```
+
+Each completed answer is flushed immediately to the JSONL checkpoint. Re-run
+the same command after an interruption to resume. Use `--no-resume` only when
+answers should intentionally be regenerated.
+
+The report separates retrieval and generation latency and includes normalized
+exact match, token F1, numeric recall, refusal behavior, citation validity,
+sentence citation coverage, and strict/relaxed citation agreement with the
+FinanceBench evidence pages. These are deterministic diagnostics rather than a
+claim of complete semantic faithfulness; qualitative review remains necessary.
+
 For a separate corpus-wide experiment, run all 150 questions and compare
 similarity search with MMR at three values of `k`:
 
