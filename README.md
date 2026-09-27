@@ -271,14 +271,25 @@ from the pages represented by the three highest-ranked results. Control this
 with `--expand-top-pages` and `--max-context-chunks`; retrieval metrics are still
 computed only from the original ranked results.
 
+The current workflow routes explicitly defined net working capital questions
+(`total current assets less total current liabilities`) to a deterministic
+calculator. It reads both first-year line items from the same cited balance
+sheet page, then subtracts them without consulting the benchmark answer. Other
+questions use the local LLM. A conservative critic checks citation labels and
+whether numbers in LLM answers appear in the cited passages (or the question);
+failed checks yield `INSUFFICIENT_CONTEXT`. The JSON report retains `raw_answer`,
+`route`, `calculation`, and `critic_issues` for audit. This is **not** a general
+financial arithmetic agent or proof of semantic entailment; the critic cannot
+detect every misleading statement or a wrong value copied from a source.
+
 First verify the complete pipeline on three questions (one per type):
 
 ```powershell
 python .\scripts\evaluate_financebench_generation.py `
   --samples-per-type 1 --k 10 `
   --ollama-model llama3.2 `
-  --checkpoint evaluations/results/generation_smoke_checkpoint.jsonl `
-  --output evaluations/results/generation_smoke.json
+  --checkpoint evaluations/results/generation_workflow_smoke_checkpoint.jsonl `
+  --output evaluations/results/generation_workflow_smoke.json
 ```
 
 Then evaluate the fixed 30-question stratified sample:

@@ -22,18 +22,18 @@ from app.core.config import settings
 from app.core.embeddings import get_embeddings
 from app.evaluation.financebench import load_financebench_dataset
 from app.evaluation.generation import (
-    build_grounded_prompt,
     evaluate_answer,
     expand_with_same_page_chunks,
     format_context,
     mean_available,
     stratified_sample,
 )
+from app.evaluation.grounded_workflow import grounded_answer
 from app.evaluation.retrieval import evaluate_ranked_documents_by_locations
 from scripts.evaluate_financebench_retrieval import load_or_build_document_stores
 
 
-PROMPT_VERSION = "financebench_grounded_v4"
+PROMPT_VERSION = "financebench_grounded_calculator_critic_v1"
 PAGE_TOLERANCE = 1
 EVIDENCE_NGRAM_SIZE = 5
 GENERATION_METRICS = (
@@ -295,10 +295,12 @@ def main() -> None:
             max_documents=args.max_context_chunks,
         )
         context, sources = format_context(context_documents)
-        prompt = build_grounded_prompt(example["question"], context)
-
         generation_started = perf_counter()
-        answer = invoke_with_retries(llm, prompt, args.max_retries)
+        workflow = grounded_answer(
+            example["question"], context, sources,
+            lambda prompt: invoke_with_retries(llm, prompt, args.max_retries),
+        )
+        answer = workflow["answer"]
         generation_latency_ms = (perf_counter() - generation_started) * 1000
         generation_metrics = evaluate_answer(
             answer,
@@ -321,6 +323,10 @@ def main() -> None:
             "reference_answer": example["answer"],
             "reference_justification": example["justification"],
             "answer": answer,
+            "raw_answer": workflow["raw_answer"],
+            "route": workflow["route"],
+            "critic_issues": workflow["critic_issues"],
+            "calculation": workflow["calculation"],
             "sources": sources,
             "expected_locations": [
                 {"source": filename, "loader_page_index": page}
