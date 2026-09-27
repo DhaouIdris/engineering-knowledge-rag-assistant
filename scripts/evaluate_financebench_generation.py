@@ -33,7 +33,7 @@ from app.evaluation.retrieval import evaluate_ranked_documents_by_locations
 from scripts.evaluate_financebench_retrieval import load_or_build_document_stores
 
 
-PROMPT_VERSION = "financebench_grounded_calculator_critic_v2"
+PROMPT_VERSION = "financebench_grounded_calculator_critic_v3"
 PAGE_TOLERANCE = 1
 EVIDENCE_NGRAM_SIZE = 5
 GENERATION_METRICS = (
@@ -69,6 +69,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-context-chunks", type=int, default=20)
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--samples-per-type", type=int, default=10)
+    parser.add_argument(
+        "--question-id", default=None,
+        help="Evaluate one dataset question by ID to check a fix without a full run.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ollama-model", default=settings.ollama_model)
     parser.add_argument("--ollama-base-url", default=settings.ollama_base_url)
@@ -77,10 +81,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument(
         "--checkpoint",
-        default="evaluations/results/financebench_generation_v2_checkpoint.jsonl",
+        default="evaluations/results/financebench_generation_v3_checkpoint.jsonl",
     )
     parser.add_argument(
-        "--output", default="evaluations/results/financebench_generation_v2.json"
+        "--output", default="evaluations/results/financebench_generation_v3.json"
     )
     parser.add_argument(
         "--no-resume",
@@ -107,6 +111,7 @@ def run_signature(arguments: argparse.Namespace, selected_ids: list[str]) -> str
         "page_tolerance": PAGE_TOLERANCE,
         "evidence_ngram_size": EVIDENCE_NGRAM_SIZE,
         "selected_ids": selected_ids,
+        "question_id": arguments.question_id,
     }
     payload = json.dumps(configuration, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
@@ -220,9 +225,15 @@ def main() -> None:
     )
     pdf_dir = Path(args.pdf_dir) if args.pdf_dir else benchmark_dir / "pdfs"
     dataset = load_financebench_dataset(questions_path, pdf_dir)
-    selected = stratified_sample(
-        dataset["examples"], args.samples_per_type, args.seed
-    )
+    if args.question_id:
+        selected = [example for example in dataset["examples"]
+                    if example["id"] == args.question_id]
+        if not selected:
+            raise SystemExit(f"Unknown question ID: {args.question_id}")
+    else:
+        selected = stratified_sample(
+            dataset["examples"], args.samples_per_type, args.seed
+        )
     selected_dataset = {"dataset_name": dataset["dataset_name"], "examples": selected}
     selected_ids = [example["id"] for example in selected]
     signature = run_signature(args, selected_ids)
@@ -293,6 +304,10 @@ def main() -> None:
             stores[expected_filename],
             top_pages=args.expand_top_pages,
             max_documents=args.max_context_chunks,
+            priority_passage=("total current liabilities"
+                              if "total current liabilities" in example["question"].casefold()
+                              and "balance sheet" in example["question"].casefold()
+                              else None),
         )
         context, sources = format_context(context_documents)
         generation_started = perf_counter()

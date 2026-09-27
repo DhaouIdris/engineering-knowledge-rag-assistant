@@ -287,14 +287,32 @@ failed checks yield `INSUFFICIENT_CONTEXT`. The JSON report retains `raw_answer`
 financial arithmetic agent or proof of semantic entailment; the critic cannot
 detect every misleading statement or a wrong value copied from a source.
 
+For balance sheet unit questions, context expansion first visits the retrieved
+page containing `total current liabilities`, bringing in its page header when
+the indexed PDF contains it. It does not use benchmark evidence locations to
+choose the page. Check the Netflix case using the cached document index without
+rerunning the full benchmark:
+
+```powershell
+python .\scripts\evaluate_financebench_generation.py `
+  --question-id financebench_id_03282 `
+  --checkpoint evaluations/results/netflix_unit_check_v3_checkpoint.jsonl `
+  --output evaluations/results/netflix_unit_check_v3.json
+```
+
+Inspect `route`, `answer`, and the sources cited in the JSON. If the header is
+still missing, the workflow abstains; it never borrows a unit from another
+financial statement. The index cache avoids rebuilding the PDF embeddings,
+and this supported calculation does not call Ollama.
+
 First verify the complete pipeline on three questions (one per type):
 
 ```powershell
 python .\scripts\evaluate_financebench_generation.py `
   --samples-per-type 1 --k 10 `
   --ollama-model llama3.2 `
-  --checkpoint evaluations/results/generation_workflow_smoke_v2_checkpoint.jsonl `
-  --output evaluations/results/generation_workflow_smoke_v2.json
+  --checkpoint evaluations/results/generation_workflow_smoke_v3_checkpoint.jsonl `
+  --output evaluations/results/generation_workflow_smoke_v3.json
 ```
 
 Then evaluate the fixed 30-question stratified sample:
@@ -303,8 +321,8 @@ Then evaluate the fixed 30-question stratified sample:
 python .\scripts\evaluate_financebench_generation.py `
   --samples-per-type 10 --seed 42 --k 10 `
   --ollama-model llama3.2 `
-  --checkpoint evaluations/results/financebench_generation_v2_checkpoint.jsonl `
-  --output evaluations/results/financebench_generation_v2.json
+  --checkpoint evaluations/results/financebench_generation_v3_checkpoint.jsonl `
+  --output evaluations/results/financebench_generation_v3.json
 ```
 
 Each completed answer is flushed immediately to the JSONL checkpoint. Re-run

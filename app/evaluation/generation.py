@@ -77,12 +77,14 @@ def expand_with_same_page_chunks(
     *,
     top_pages: int = 3,
     max_documents: int = 20,
+    priority_passage: str | None = None,
 ) -> list[Any]:
     """Add companion chunks from the pages of the highest-ranked results.
 
-    Financial tables are frequently split into several chunks even though all
-    rows belong to one PDF page. Retrieval ranking remains based on the original
-    results; this function only expands the context given to the generator.
+    Financial tables are frequently split across chunks on one PDF page. If a
+    question requires a specific table row, its retrieved page can take priority
+    over less relevant pages when choosing companions. Original retrieved chunks
+    retain their ranking and labels at the start of the context.
     """
     if top_pages <= 0 or max_documents <= 0:
         return list(documents)[:max_documents]
@@ -97,7 +99,13 @@ def expand_with_same_page_chunks(
         for document in selected
     }
     target_pages: list[tuple[str, int]] = []
-    for document in documents:
+    preferred = (
+        [document for document in documents
+         if priority_passage and priority_passage.casefold() in
+         " ".join(str(document.page_content or "").split()).casefold()]
+        if priority_passage else []
+    )
+    for document in [*preferred, *documents]:
         page = document.metadata.get("page")
         location = (source_basename(document.metadata.get("source")), page)
         if isinstance(page, int) and location not in target_pages:

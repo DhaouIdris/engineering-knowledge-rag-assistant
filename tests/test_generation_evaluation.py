@@ -12,6 +12,7 @@ from app.evaluation.generation import (
     stratified_sample,
     token_f1,
 )
+from app.evaluation.grounded_workflow import grounded_answer
 
 
 @dataclass
@@ -106,6 +107,34 @@ def test_context_expansion_prioritizes_the_highest_ranked_page():
         "lower result",
         "needed row",
     ]
+
+
+def test_context_expansion_prioritizes_page_with_requested_table_row():
+    distracting = [FakeDocument(f"note {i}", {"source": "report.pdf", "page": i})
+                   for i in range(3)]
+    header = FakeDocument("CONSOLIDATED BALANCE SHEETS (in thousands) 2017 2016",
+                          {"source": "report.pdf", "page": 44})
+    row = FakeDocument("Total current liabilities 5,466,312 4,586,657",
+                       {"source": "report.pdf", "page": 44})
+    store = FakeStore({**{str(i): item for i, item in enumerate(distracting)},
+                       "header": header, "row": row})
+    ranked = [*distracting, row]
+
+    expanded = expand_with_same_page_chunks(
+        ranked, store, top_pages=3, max_documents=5,
+        priority_passage="total current liabilities",
+    )
+    context, sources = format_context(expanded)
+    assert expanded[:4] == ranked
+    assert expanded[4] == header
+    assert "(in thousands)" in context
+    assert sources[3]["loader_page_index"] == sources[4]["loader_page_index"] == 44
+    outcome = grounded_answer(
+        "What is FY2017 total current liabilities in USD millions? Use the balance sheet.",
+        context, sources, lambda _: (_ for _ in ()).throw(AssertionError("No LLM needed")),
+    )
+    assert outcome["route"] == "deterministic_balance_sheet_units"
+    assert "$5,466.312 million" in outcome["answer"]
 
 
 def test_answer_similarity_and_numeric_metrics_are_deterministic():
