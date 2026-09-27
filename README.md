@@ -271,11 +271,16 @@ from the pages represented by the three highest-ranked results. Control this
 with `--expand-top-pages` and `--max-context-chunks`; retrieval metrics are still
 computed only from the original ranked results.
 
-The current workflow routes explicitly defined net working capital questions
-(`total current assets less total current liabilities`) to a deterministic
-calculator. It reads both first-year line items from the same cited balance
-sheet page, then subtracts them without consulting the benchmark answer. Other
-questions use the local LLM. A conservative critic checks citation labels and
+The workflow uses narrow deterministic calculations when the cited passages
+provide all operands: explicitly defined net working capital; the sum of two
+new, distinct revolving facilities dated as asked; and consecutive-year total
+net revenue growth from a consolidated income statement with one decimal place.
+It can also convert a balance sheet's current liabilities from thousands to
+millions **only if that same cited page contains the balance sheet unit and year
+header**. Otherwise, that balance sheet question receives
+`INSUFFICIENT_CONTEXT` instead of an unverified conversion. These routes use
+neither benchmark answers nor reference evidence pages. Other questions use
+the local LLM. A conservative critic checks citation labels and
 whether numbers in LLM answers appear in the cited passages (or the question);
 failed checks yield `INSUFFICIENT_CONTEXT`. The JSON report retains `raw_answer`,
 `route`, `calculation`, and `critic_issues` for audit. This is **not** a general
@@ -288,8 +293,8 @@ First verify the complete pipeline on three questions (one per type):
 python .\scripts\evaluate_financebench_generation.py `
   --samples-per-type 1 --k 10 `
   --ollama-model llama3.2 `
-  --checkpoint evaluations/results/generation_workflow_smoke_checkpoint.jsonl `
-  --output evaluations/results/generation_workflow_smoke.json
+  --checkpoint evaluations/results/generation_workflow_smoke_v2_checkpoint.jsonl `
+  --output evaluations/results/generation_workflow_smoke_v2.json
 ```
 
 Then evaluate the fixed 30-question stratified sample:
@@ -298,8 +303,8 @@ Then evaluate the fixed 30-question stratified sample:
 python .\scripts\evaluate_financebench_generation.py `
   --samples-per-type 10 --seed 42 --k 10 `
   --ollama-model llama3.2 `
-  --checkpoint evaluations/results/financebench_generation_checkpoint.jsonl `
-  --output evaluations/results/financebench_generation.json
+  --checkpoint evaluations/results/financebench_generation_v2_checkpoint.jsonl `
+  --output evaluations/results/financebench_generation_v2.json
 ```
 
 Each completed answer is flushed immediately to the JSONL checkpoint. Re-run

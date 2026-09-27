@@ -33,7 +33,7 @@ from app.evaluation.retrieval import evaluate_ranked_documents_by_locations
 from scripts.evaluate_financebench_retrieval import load_or_build_document_stores
 
 
-PROMPT_VERSION = "financebench_grounded_calculator_critic_v1"
+PROMPT_VERSION = "financebench_grounded_calculator_critic_v2"
 PAGE_TOLERANCE = 1
 EVIDENCE_NGRAM_SIZE = 5
 GENERATION_METRICS = (
@@ -77,10 +77,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument(
         "--checkpoint",
-        default="evaluations/results/financebench_generation_checkpoint.jsonl",
+        default="evaluations/results/financebench_generation_v2_checkpoint.jsonl",
     )
     parser.add_argument(
-        "--output", default="evaluations/results/financebench_generation.json"
+        "--output", default="evaluations/results/financebench_generation_v2.json"
     )
     parser.add_argument(
         "--no-resume",

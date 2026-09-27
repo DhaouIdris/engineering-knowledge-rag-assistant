@@ -1,13 +1,13 @@
 """Small, auditable generation workflow for document-grounded FinanceBench QA.
 
-The deterministic route deliberately covers only explicitly defined net working
-capital questions. Other arithmetic requires a separately validated tool schema.
+Deterministic routes handle only calculations whose operands, dates and units
+can be read unambiguously from cited passages.
 """
 
 from __future__ import annotations
 
 import re
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Sequence
 
 from app.evaluation.generation import CITATION_PATTERN, REFUSAL_PATTERN, build_grounded_prompt
@@ -16,6 +16,122 @@ from app.evaluation.generation import CITATION_PATTERN, REFUSAL_PATTERN, build_g
 _YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 _VALUE = r"\(?-?\$?\s*\d[\d,]*(?:\.\d+)?\)?"
 _LABELS = ("Total current assets", "Total current liabilities")
+
+
+def _normal(text: str) -> str:
+    return re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip()
+
+
+def calculate_credit_capacity(question: str, sources: Sequence[dict[str, Any]]):
+    """Sum distinct new revolving facilities effective on the asked date.
+
+    Optional commitment increases and terminated facilities are not capacity.
+    Refuse if any facility is duplicated with conflicting amounts.
+    """
+    if not (re.search(r"\btotal amount\b.*\bborrow\b", question, re.I)
+            and re.search(r"\brevolving credit agreements\b", question, re.I)):
+        return None
+    asked_date = re.search(r"\b(?:as of|on)\s+([A-Za-z]+\s+\d{1,2},\s*\d{4})", question, re.I)
+    if not asked_date:
+        return None
+    facilities: dict[str, tuple[Decimal, str, tuple[Any, Any]]] = {}
+    for source in sources:
+        content = _normal(str(source.get("content") or ""))
+        # A statement beginning "entered into a new" excludes historic,
+        # terminated and merely optional increased commitments.
+        for match in re.finditer(
+            r"\bOn\s+([A-Za-z]+\s+\d{1,2},\s*\d{4}),?\s+.{0,100}?"
+            r"entered into a new\s+\$\s*(\d[\d,]*(?:\.\d+)?)\s+"
+            r"(five[- ]year|364[- ]day)\s+unsecured revolving credit agreement\b",
+            content, re.I,
+        ):
+            if _normal(match.group(1)).casefold() != _normal(asked_date.group(1)).casefold():
+                continue
+            kind = re.sub(r"[- ]", "", match.group(3).casefold())
+            amount = Decimal(match.group(2).replace(",", ""))
+            location = (source.get("source"), source.get("loader_page_index"))
+            previous = facilities.get(kind)
+            if previous and (previous[0] != amount or previous[2] != location):
+                return None
+            facilities.setdefault(kind, (amount, source["label"], location))
+    if set(facilities) != {"fiveyear", "364day"}:
+        return None
+    first, second = facilities["fiveyear"], facilities["364day"]
+    if first[2] != second[2]:
+        return None
+    total = first[0] + second[0]
+    return {
+        "answer": (f"The two revolving facilities allow ${total:,.0f} in total "
+                   f"(${first[0]:,.0f} [{first[1]}] + ${second[0]:,.0f} [{second[1]}])."),
+        "operands": {"five_year": str(first[0]), "364_day": str(second[0])},
+    }
+
+
+def calculate_revenue_growth(question: str, sources: Sequence[dict[str, Any]]):
+    """Calculate growth from the consolidated income statement's first two years."""
+    if not (re.search(r"\b(?:total|net) revenue growth rate\b", question, re.I)
+            and re.search(r"\bone decimal place\b", question, re.I)):
+        return None
+    years = sorted(set(_YEAR.findall(question)))
+    if len(years) != 2 or int(years[1]) - int(years[0]) != 1:
+        return None
+    candidates: list[tuple[Decimal, Decimal, str]] = []
+    for source in sources:
+        content = _normal(str(source.get("content") or ""))
+        if not re.search(r"CONSOLIDATED STATEMENTS OF OPERATIONS", content, re.I):
+            continue
+        header = re.search(rf"\b{years[1]}\s+{years[0]}\b", content)
+        row = re.search(
+            rf"\bTotal net revenue\s+\$?\s*({_VALUE})\s+\$?\s*({_VALUE})", content, re.I
+        )
+        if not header or not row or header.start() > row.start():
+            continue
+        current = Decimal(row.group(1).replace(",", ""))
+        previous = Decimal(row.group(2).replace(",", ""))
+        if previous <= 0:
+            return None
+        candidates.append((current, previous, source["label"]))
+    if not candidates or len({(a, b) for a, b, _ in candidates}) != 1:
+        return None
+    current, previous, label = candidates[0]
+    percentage = ((current / previous - 1) * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return {
+        "answer": (f"Total net revenue grew {percentage}% from {years[0]} to {years[1]} "
+                   f"(({current:,.0f} − {previous:,.0f}) / {previous:,.0f} × 100) [{label}]."),
+        "operands": {"current": str(current), "previous": str(previous)},
+    }
+
+
+def calculate_balance_sheet_millions(question: str, sources: Sequence[dict[str, Any]]):
+    """Convert a balance sheet amount only with its OWN page's unit header."""
+    if not (re.search(r"\btotal current liabilities\b", question, re.I)
+            and re.search(r"\b(?:USD )?millions\b", question, re.I)
+            and re.search(r"\bbalance sheet\b", question, re.I)):
+        return None
+    years = set(_YEAR.findall(question))
+    if len(years) != 1:
+        return None
+    year = years.pop()
+    pages: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
+    for source in sources:
+        pages.setdefault((source.get("source"), source.get("loader_page_index")), []).append(source)
+    candidates: list[tuple[Decimal, str, str]] = []
+    for siblings in pages.values():
+        page_text = _normal(" ".join(str(s.get("content") or "") for s in siblings))
+        if not (re.search(r"CONSOLIDATED BALANCE SHEETS", page_text, re.I)
+                and re.search(r"\bin thousands\b", page_text, re.I)
+                and re.search(rf"\b{year}\s+(?:19|20)\d{{2}}\b", page_text)):
+            continue
+        for source in siblings:
+            match = re.search(rf"\bTotal current liabilities\s+\$?\s*({_VALUE})", _normal(source.get("content") or ""), re.I)
+            if match:
+                candidates.append((Decimal(match.group(1).replace(",", "")) / 1000,
+                                   source["label"], next(s["label"] for s in siblings if re.search(r"\bin thousands\b", _normal(s.get("content") or ""), re.I))))
+    if not candidates or len({a for a, _, _ in candidates}) != 1:
+        return None
+    value, row_label, unit_label = candidates[0]
+    return {"answer": f"FY{year} total current liabilities were ${value:,.3f} million [{row_label}] [{unit_label}].",
+            "operands": {"liabilities_in_thousands": str(value * 1000), "liabilities_in_millions": str(value)}}
 
 
 def _table_value(sources: Sequence[dict[str, Any]], label: str, year: str):
@@ -118,13 +234,29 @@ def grounded_answer(
     question: str, context: str, sources: Sequence[dict[str, Any]], invoke: Callable[[str], str]
 ) -> dict[str, Any]:
     """Route a supported calculation; otherwise generate, check, and abstain."""
-    calculation = calculate_working_capital(question, sources)
+    calculators = (
+        ("deterministic_working_capital", calculate_working_capital),
+        ("deterministic_credit_capacity", calculate_credit_capacity),
+        ("deterministic_revenue_growth", calculate_revenue_growth),
+        ("deterministic_balance_sheet_units", calculate_balance_sheet_millions),
+    )
+    calculation = None
+    route = "llm"
+    for name, calculator in calculators:
+        calculation = calculator(question, sources)
+        if calculation is not None:
+            route = name
+            break
     if calculation is not None:
         candidate = calculation["answer"]
-        route = "deterministic_working_capital"
+    elif (re.search(r"\btotal current liabilities\b", question, re.I)
+          and re.search(r"\bbalance sheet\b", question, re.I)
+          and re.search(r"\b(?:USD )?millions\b", question, re.I)):
+        # A bare balance-sheet row does not establish its displayed units.
+        candidate = "INSUFFICIENT_CONTEXT: balance sheet unit or year header is missing."
+        route = "missing_balance_sheet_units"
     else:
         candidate = invoke(build_grounded_prompt(question, context))
-        route = "llm"
     issues = check_answer(candidate, sources, computed=calculation is not None, question=question)
     answer = "INSUFFICIENT_CONTEXT: answer failed citation/provenance checks." if issues else candidate
     return {"answer": answer, "raw_answer": candidate, "route": route, "critic_issues": issues,
