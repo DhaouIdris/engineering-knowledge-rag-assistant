@@ -406,6 +406,12 @@ needed and available, the evaluator accepts `--num-ctx 8192`; this can raise
 RAM use and latency. The application retriever is MMR with `k=4`, whereas this
 generation evaluator searches the annotated PDF with similarity and `k=10`.
 Neither experiment changes that distinction or measures deployment accuracy.
+The console now separates `RetrievalEvidence` (top-k similarity results) from
+`SuppliedEvidence` (chunks actually sent to the answer workflow), especially
+when `--context-mode oracle-page` bypasses the retrieved chunks. Older V3
+reports and their `Evidence` console output measured retrieval evidence only.
+Lexical evidence overlap does not establish that all required operands are on
+the supplied page or that the answer is semantically correct.
 
 For a separate corpus-wide experiment, run all 150 questions and compare
 similarity search with MMR at three values of `k`:

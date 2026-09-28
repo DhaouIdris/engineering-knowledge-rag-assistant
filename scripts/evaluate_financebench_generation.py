@@ -218,6 +218,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "questions": len(rows),
         **{metric: mean_available(metric_rows, metric) for metric in GENERATION_METRICS},
+        "retrieval_evidence_hit": mean_available(rows, "retrieval_evidence_hit"),
         "context_evidence_hit": mean_available(rows, "context_evidence_hit"),
         "mean_retrieval_latency_ms": mean_available(rows, "retrieval_latency_ms"),
         "mean_generation_latency_ms": mean_available(rows, "generation_latency_ms"),
@@ -373,6 +374,18 @@ def main() -> None:
                                   else None),
             )
         context, sources = format_context(context_documents)
+        supplied_context_metrics = evaluate_ranked_documents_by_locations(
+            context_documents,
+            relevant_locations=example["relevant_locations"],
+            k=len(context_documents),
+            page_tolerance=PAGE_TOLERANCE,
+            evidence_texts=[
+                (item["source"], item["evidence_text"])
+                for item in example["evidence"]
+                if item.get("evidence_text")
+            ],
+            evidence_ngram_size=EVIDENCE_NGRAM_SIZE,
+        )
         supplied_page_hit = any(
             (source["source"], source["loader_page_index"])
             in example["relevant_locations"] for source in sources
@@ -389,7 +402,7 @@ def main() -> None:
             str(example.get("answer") or ""),
             sources,
             example["relevant_locations"],
-            context_evidence_hit=bool(retrieval_metrics["evidence_hit_at_k"]),
+            context_evidence_hit=bool(supplied_context_metrics["evidence_hit_at_k"]),
             evidence_texts=[
                 (item["source"], item["evidence_text"])
                 for item in example["evidence"]
@@ -419,7 +432,8 @@ def main() -> None:
             ],
             "context_hit": retrieval_metrics["hit_at_k"],
             "context_recall": retrieval_metrics["recall_at_k"],
-            "context_evidence_hit": retrieval_metrics["evidence_hit_at_k"],
+            "retrieval_evidence_hit": retrieval_metrics["evidence_hit_at_k"],
+            "context_evidence_hit": supplied_context_metrics["evidence_hit_at_k"],
             "generation_metrics": generation_metrics,
             "retrieval_latency_ms": retrieval_latency_ms,
             "generation_latency_ms": generation_latency_ms,
@@ -431,7 +445,8 @@ def main() -> None:
             f"[{position}/{len(selected)}] {example['id']}: "
             f"F1={generation_metrics['token_f1']:.3f} "
             f"CitationHit={generation_metrics['citation_ground_truth_hit']:.0f} "
-            f"Evidence={retrieval_metrics['evidence_hit_at_k']:.0f} "
+            f"RetrievalEvidence={retrieval_metrics['evidence_hit_at_k']:.0f} "
+            f"SuppliedEvidence={supplied_context_metrics['evidence_hit_at_k']:.0f} "
             f"generation={generation_latency_ms / 1000:.1f}s",
             flush=True,
         )
