@@ -18,13 +18,17 @@ REFUSAL_PATTERN = re.compile(r"^\s*INSUFFICIENT(?:_|\s+)CONTEXT\b", re.IGNORECAS
 
 
 def stratified_sample(
-    examples: Sequence[dict[str, Any]], samples_per_type: int, seed: int
+    examples: Sequence[dict[str, Any]], samples_per_type: int, seed: int,
+    *, excluded_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Select a stable sample from every FinanceBench question type."""
     if samples_per_type <= 0:
         raise ValueError("samples_per_type must be strictly positive.")
+    excluded_ids = excluded_ids or set()
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for example in examples:
+        if example["id"] in excluded_ids:
+            continue
         groups[str(example.get("question_type") or "unknown")].append(example)
 
     selected: list[dict[str, Any]] = []

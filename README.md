@@ -329,6 +329,31 @@ Each completed answer is flushed immediately to the JSONL checkpoint. Re-run
 the same command after an interruption to resume. Use `--no-resume` only when
 answers should intentionally be regenerated.
 
+### Generation evaluation after development
+
+The 30 questions in the V3 report were inspected while developing the
+calculator routes. Treat them as development cases. The committed
+`evaluations/datasets/financebench_generation_dev_ids.json` excludes exactly
+those IDs from a second, reproducible, balanced 30-question run; the answer
+workflow and its parameters remain frozen:
+
+```powershell
+python .\scripts\evaluate_financebench_generation.py `
+  --samples-per-type 10 --seed 42 --k 10 `
+  --exclude-ids-file evaluations/datasets/financebench_generation_dev_ids.json `
+  --ollama-model llama3.2 `
+  --checkpoint evaluations/results/financebench_generation_unseen_v3_checkpoint.jsonl `
+  --output evaluations/results/financebench_generation_unseen_v3.json
+```
+
+This tests generation on previously unused questions, but retrieval parameters
+were explored on all 150 open FinanceBench questions. Also, the generation
+evaluator uses the annotated evidence PDF to select the correct document
+*before* searching it; it measures within-document retrieval and answer
+generation, not finding the correct PDF among a full corpus. Report answer
+correctness separately from citation validity, retrieval hit rates and refusal
+rate. Do not tune the workflow against this second set and call it held out.
+
 The report separates retrieval and generation latency and includes normalized
 exact match, token F1, numeric recall, refusal behavior, citation validity,
 sentence citation coverage, and strict/relaxed citation agreement with the

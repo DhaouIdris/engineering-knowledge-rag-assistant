@@ -60,6 +60,23 @@ def test_stratified_sample_is_balanced_and_reproducible():
     }
 
 
+def test_stratified_sample_excludes_prior_development_questions():
+    examples = [
+        {"id": f"{kind}-{i}", "question_type": kind}
+        for kind in ("domain", "metrics", "novel") for i in range(5)
+    ]
+    excluded = {f"{kind}-0" for kind in ("domain", "metrics", "novel")}
+    selected = stratified_sample(
+        examples, samples_per_type=2, seed=42, excluded_ids=excluded,
+    )
+    assert len(selected) == 6
+    assert {row["id"] for row in selected}.isdisjoint(excluded)
+    assert {kind: sum(row["question_type"] == kind for row in selected)
+            for kind in ("domain", "metrics", "novel")} == {
+                "domain": 2, "metrics": 2, "novel": 2,
+            }
+
+
 def test_format_context_creates_stable_source_labels():
     context, sources = format_context(
         [

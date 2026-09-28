@@ -70,6 +70,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--samples-per-type", type=int, default=10)
     parser.add_argument(
+        "--exclude-ids-file", default=None,
+        help="JSON list of development question IDs to exclude from stratified sampling.",
+    )
+    parser.add_argument(
         "--question-id", default=None,
         help="Evaluate one dataset question by ID to check a fix without a full run.",
     )
@@ -94,7 +98,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_signature(arguments: argparse.Namespace, selected_ids: list[str]) -> str:
+def run_signature(arguments: argparse.Namespace, selected_ids: list[str],
+                  excluded_ids: set[str] | None = None) -> str:
     configuration = {
         "prompt_version": PROMPT_VERSION,
         "embedding_model": arguments.embedding_model,
@@ -111,6 +116,7 @@ def run_signature(arguments: argparse.Namespace, selected_ids: list[str]) -> str
         "page_tolerance": PAGE_TOLERANCE,
         "evidence_ngram_size": EVIDENCE_NGRAM_SIZE,
         "selected_ids": selected_ids,
+        "excluded_ids": sorted(excluded_ids or set()),
         "question_id": arguments.question_id,
     }
     payload = json.dumps(configuration, sort_keys=True, separators=(",", ":"))
@@ -225,18 +231,33 @@ def main() -> None:
     )
     pdf_dir = Path(args.pdf_dir) if args.pdf_dir else benchmark_dir / "pdfs"
     dataset = load_financebench_dataset(questions_path, pdf_dir)
+    excluded_ids: set[str] = set()
+    if args.exclude_ids_file:
+        manifest = json.loads(Path(args.exclude_ids_file).read_text(encoding="utf-8"))
+        ids = manifest.get("excluded_ids") if isinstance(manifest, dict) else None
+        if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+            raise SystemExit("--exclude-ids-file must contain an excluded_ids string list.")
+        if len(ids) != len(set(ids)):
+            raise SystemExit("--exclude-ids-file contains duplicate question IDs.")
+        excluded_ids = set(ids)
+        unknown = excluded_ids - {example["id"] for example in dataset["examples"]}
+        if unknown:
+            raise SystemExit(f"Unknown excluded question IDs: {sorted(unknown)}")
     if args.question_id:
+        if args.question_id in excluded_ids:
+            raise SystemExit("The requested question ID is in --exclude-ids-file.")
         selected = [example for example in dataset["examples"]
                     if example["id"] == args.question_id]
         if not selected:
             raise SystemExit(f"Unknown question ID: {args.question_id}")
     else:
         selected = stratified_sample(
-            dataset["examples"], args.samples_per_type, args.seed
+            dataset["examples"], args.samples_per_type, args.seed,
+            excluded_ids=excluded_ids,
         )
     selected_dataset = {"dataset_name": dataset["dataset_name"], "examples": selected}
     selected_ids = [example["id"] for example in selected]
-    signature = run_signature(args, selected_ids)
+    signature = run_signature(args, selected_ids, excluded_ids)
 
     checkpoint_path = Path(args.checkpoint)
     if args.no_resume and checkpoint_path.exists():
@@ -377,6 +398,8 @@ def main() -> None:
         "expand_top_pages": args.expand_top_pages,
         "max_context_chunks": args.max_context_chunks,
         "samples_per_type": args.samples_per_type,
+        "exclude_ids_file": args.exclude_ids_file,
+        "excluded_question_count": len(excluded_ids),
         "seed": args.seed,
         "ollama_model": args.ollama_model,
         "temperature": args.temperature,
