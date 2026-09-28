@@ -362,6 +362,51 @@ citations, since the same fact can appear on a different page from the benchmark
 annotation. These are deterministic diagnostics rather than a claim of complete
 semantic faithfulness; qualitative review remains necessary.
 
+### Cheap diagnosis on development questions
+
+Inspect an existing JSON report without loading PDFs, embeddings or Ollama:
+
+```powershell
+python .\scripts\diagnose_financebench_generation.py `
+  .\evaluations\results\financebench_generation_v3.json
+```
+
+It separates refusals by whether an annotated evidence page actually reached
+the **supplied context**. A page hit does not guarantee the correct table row
+or a correct answer. Prompt size is recorded in characters, not tokens.
+
+Two small follow-up runs use previously inspected development IDs and the
+existing document index cache. Use different checkpoint filenames for each
+configuration. First, for a missed page, give the model only chunks from the
+annotated PDF page. This **oracle diagnostic** uses benchmark labels and is
+never a deployable retrieval result:
+
+```powershell
+python .\scripts\evaluate_financebench_generation.py `
+  --question-id financebench_id_00222 --context-mode oracle-page `
+  --checkpoint evaluations/results/dev_00222_oracle_checkpoint.jsonl `
+  --output evaluations/results/dev_00222_oracle.json
+```
+
+Compare that answer with question `00222` in the existing V3 report. For a
+question whose annotated page did reach the original 20-chunk context, check
+whether reducing noise helps:
+
+```powershell
+python .\scripts\evaluate_financebench_generation.py `
+  --question-id financebench_id_00460 --max-context-chunks 5 `
+  --checkpoint evaluations/results/dev_00460_five_checkpoint.jsonl `
+  --output evaluations/results/dev_00460_five.json
+```
+
+Compare question `00460` with the existing V3 report, including
+`supplied_context_page_hit` in the new result. While Ollama runs, `ollama ps`
+in a second terminal shows its allocated context. If a larger context is
+needed and available, the evaluator accepts `--num-ctx 8192`; this can raise
+RAM use and latency. The application retriever is MMR with `k=4`, whereas this
+generation evaluator searches the annotated PDF with similarity and `k=10`.
+Neither experiment changes that distinction or measures deployment accuracy.
+
 For a separate corpus-wide experiment, run all 150 questions and compare
 similarity search with MMR at three values of `k`:
 

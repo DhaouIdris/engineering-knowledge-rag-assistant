@@ -22,10 +22,12 @@ from app.core.config import settings
 from app.core.embeddings import get_embeddings
 from app.evaluation.financebench import load_financebench_dataset
 from app.evaluation.generation import (
+    build_grounded_prompt,
     evaluate_answer,
     expand_with_same_page_chunks,
     format_context,
     mean_available,
+    source_basename,
     stratified_sample,
 )
 from app.evaluation.grounded_workflow import grounded_answer
@@ -67,6 +69,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--expand-top-pages", type=int, default=3)
     parser.add_argument("--max-context-chunks", type=int, default=20)
+    parser.add_argument(
+        "--context-mode", choices=("retrieved", "oracle-page"), default="retrieved",
+        help="Diagnostic only: oracle-page supplies annotated PDF pages from the benchmark.",
+    )
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--samples-per-type", type=int, default=10)
     parser.add_argument(
@@ -82,6 +88,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ollama-base-url", default=settings.ollama_base_url)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--num-predict", type=int, default=384)
+    parser.add_argument("--num-ctx", type=int, default=None,
+                        help="Explicit Ollama context window; default uses the server setting.")
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument(
         "--checkpoint",
@@ -119,6 +127,11 @@ def run_signature(arguments: argparse.Namespace, selected_ids: list[str],
         "excluded_ids": sorted(excluded_ids or set()),
         "question_id": arguments.question_id,
     }
+    # Preserve checkpoint compatibility with the original default evaluation.
+    if arguments.context_mode != "retrieved":
+        configuration["context_mode"] = arguments.context_mode
+    if arguments.num_ctx is not None:
+        configuration["num_ctx"] = arguments.num_ctx
     payload = json.dumps(configuration, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
 
@@ -163,6 +176,28 @@ def invoke_with_retries(llm: OllamaLLM, prompt: str, max_retries: int) -> str:
                 raise
             sleep(2**attempt)
     raise RuntimeError("Unreachable retry state.")
+
+
+def annotated_page_chunks(store: Any, locations: set[tuple[str, int]],
+                          limit: int) -> list[Any]:
+    """Collect actual indexed chunks on gold pages; never use answer text.
+
+    This is an oracle diagnostic and must not be reported as deployed retrieval.
+    """
+    selected = []
+    for document_id in store.index_to_docstore_id.values():
+        document = store.docstore.search(document_id)
+        if not hasattr(document, "metadata"):
+            continue
+        key = (source_basename(document.metadata.get("source")),
+               document.metadata.get("page"))
+        if key in locations:
+            selected.append(document)
+            if len(selected) == limit:
+                break
+    if not selected:
+        raise ValueError("No indexed chunks on annotated evidence pages.")
+    return selected
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -220,7 +255,7 @@ def main() -> None:
         raise SystemExit("--samples-per-type must be strictly positive.")
     if args.chunk_size <= 0 or not 0 <= args.chunk_overlap < args.chunk_size:
         raise SystemExit("Chunk overlap must be nonnegative and smaller than chunk size.")
-    if args.num_predict <= 0 or args.max_retries < 0:
+    if args.num_predict <= 0 or args.max_retries < 0 or (args.num_ctx is not None and args.num_ctx <= 0):
         raise SystemExit("--num-predict must be positive and --max-retries nonnegative.")
 
     benchmark_dir = Path(args.benchmark_dir)
@@ -287,6 +322,7 @@ def main() -> None:
         model=args.ollama_model,
         temperature=args.temperature,
         num_predict=args.num_predict,
+        **({"num_ctx": args.num_ctx} if args.num_ctx is not None else {}),
     )
 
     for position, example in enumerate(selected, start=1):
@@ -320,17 +356,27 @@ def main() -> None:
             ],
             evidence_ngram_size=EVIDENCE_NGRAM_SIZE,
         )
-        context_documents = expand_with_same_page_chunks(
-            documents,
-            stores[expected_filename],
-            top_pages=args.expand_top_pages,
-            max_documents=args.max_context_chunks,
-            priority_passage=("total current liabilities"
-                              if "total current liabilities" in example["question"].casefold()
-                              and "balance sheet" in example["question"].casefold()
-                              else None),
-        )
+        if args.context_mode == "oracle-page":
+            context_documents = annotated_page_chunks(
+                stores[expected_filename], example["relevant_locations"],
+                args.max_context_chunks,
+            )
+        else:
+            context_documents = expand_with_same_page_chunks(
+                documents,
+                stores[expected_filename],
+                top_pages=args.expand_top_pages,
+                max_documents=args.max_context_chunks,
+                priority_passage=("total current liabilities"
+                                  if "total current liabilities" in example["question"].casefold()
+                                  and "balance sheet" in example["question"].casefold()
+                                  else None),
+            )
         context, sources = format_context(context_documents)
+        supplied_page_hit = any(
+            (source["source"], source["loader_page_index"])
+            in example["relevant_locations"] for source in sources
+        )
         generation_started = perf_counter()
         workflow = grounded_answer(
             example["question"], context, sources,
@@ -364,6 +410,9 @@ def main() -> None:
             "critic_issues": workflow["critic_issues"],
             "calculation": workflow["calculation"],
             "sources": sources,
+            "context_mode": args.context_mode,
+            "supplied_context_page_hit": supplied_page_hit,
+            "prompt_characters": len(build_grounded_prompt(example["question"], context)),
             "expected_locations": [
                 {"source": filename, "loader_page_index": page}
                 for filename, page in sorted(example["relevant_locations"])
@@ -397,6 +446,8 @@ def main() -> None:
         "k": args.k,
         "expand_top_pages": args.expand_top_pages,
         "max_context_chunks": args.max_context_chunks,
+        "context_mode": args.context_mode,
+        "pdf_scope": "oracle_document_from_benchmark_annotation",
         "samples_per_type": args.samples_per_type,
         "exclude_ids_file": args.exclude_ids_file,
         "excluded_question_count": len(excluded_ids),
@@ -404,6 +455,7 @@ def main() -> None:
         "ollama_model": args.ollama_model,
         "temperature": args.temperature,
         "num_predict": args.num_predict,
+        "num_ctx": args.num_ctx,
         "page_tolerance": PAGE_TOLERANCE,
         "evidence_ngram_size": EVIDENCE_NGRAM_SIZE,
         "run_signature": signature,
