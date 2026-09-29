@@ -4,7 +4,7 @@ pytest.importorskip("langchain_ollama")
 pytest.importorskip("langchain_community")
 
 from scripts.evaluate_financebench_generation import (  # noqa: E402
-    annotated_page_chunks,
+    indexed_page_chunks,
     append_checkpoint,
     load_checkpoint,
 )
@@ -41,5 +41,5 @@ def test_oracle_page_context_uses_only_indexed_chunks_on_annotated_pages():
         docstore = Docstore()
         index_to_docstore_id = {0: "other", 1: "gold"}
 
-    selected = annotated_page_chunks(Store(), {("report.pdf", 3)}, limit=2)
+    selected = indexed_page_chunks(Store(), {("report.pdf", 3)}, limit=2)
     assert [document.page_content for document in selected] == ["Correct page"]

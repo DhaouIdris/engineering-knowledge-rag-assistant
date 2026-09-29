@@ -413,6 +413,25 @@ reports and their `Evidence` console output measured retrieval evidence only.
 Lexical evidence overlap does not establish that all required operands are on
 the supplied page or that the answer is semantically correct.
 
+An alternative that does not use annotated evidence pages is
+`--context-mode page-focused`: take the page of the first retrieved chunk and
+send its indexed chunks in document order. This avoids mixing unrelated pages
+when answering a question about a table. It still uses the annotated **PDF**
+to scope this FinanceBench evaluation, so its result is not corpus-wide RAG
+accuracy. For an inexpensive development check on the Best Buy store table:
+
+```powershell
+python .\scripts\evaluate_financebench_generation.py `
+  --question-id financebench_id_00460 --context-mode page-focused `
+  --checkpoint evaluations/results/dev_00460_page_focused_checkpoint.jsonl `
+  --output evaluations/results/dev_00460_page_focused.json
+```
+
+`--max-context-chunks` is a strict upper bound for every context mode. Earlier
+versions could append one extra page companion when the first retrieved
+results already filled the limit; therefore a previous `--max-context-chunks 5`
+run may have included six chunks.
+
 For a separate corpus-wide experiment, run all 150 questions and compare
 similarity search with MMR at three values of `k`:
 

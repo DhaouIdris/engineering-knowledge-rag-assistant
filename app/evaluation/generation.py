@@ -94,6 +94,8 @@ def expand_with_same_page_chunks(
         return list(documents)[:max_documents]
 
     selected = list(documents)[:max_documents]
+    if len(selected) >= max_documents:
+        return selected
     selected_keys = {
         (
             source_basename(document.metadata.get("source")),

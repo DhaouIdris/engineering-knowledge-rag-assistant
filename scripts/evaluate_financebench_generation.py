@@ -70,8 +70,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expand-top-pages", type=int, default=3)
     parser.add_argument("--max-context-chunks", type=int, default=20)
     parser.add_argument(
-        "--context-mode", choices=("retrieved", "oracle-page"), default="retrieved",
-        help="Diagnostic only: oracle-page supplies annotated PDF pages from the benchmark.",
+        "--context-mode", choices=("retrieved", "page-focused", "oracle-page"), default="retrieved",
+        help="page-focused expands the first retrieved page; oracle-page supplies annotated benchmark pages for diagnosis.",
     )
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--samples-per-type", type=int, default=10)
@@ -178,12 +178,9 @@ def invoke_with_retries(llm: OllamaLLM, prompt: str, max_retries: int) -> str:
     raise RuntimeError("Unreachable retry state.")
 
 
-def annotated_page_chunks(store: Any, locations: set[tuple[str, int]],
-                          limit: int) -> list[Any]:
-    """Collect actual indexed chunks on gold pages; never use answer text.
-
-    This is an oracle diagnostic and must not be reported as deployed retrieval.
-    """
+def indexed_page_chunks(store: Any, locations: set[tuple[str, int]],
+                        limit: int) -> list[Any]:
+    """Collect actual indexed chunks on selected pages; never use answer text."""
     selected = []
     for document_id in store.index_to_docstore_id.values():
         document = store.docstore.search(document_id)
@@ -358,8 +355,18 @@ def main() -> None:
             evidence_ngram_size=EVIDENCE_NGRAM_SIZE,
         )
         if args.context_mode == "oracle-page":
-            context_documents = annotated_page_chunks(
+            context_documents = indexed_page_chunks(
                 stores[expected_filename], example["relevant_locations"],
+                args.max_context_chunks,
+            )
+        elif args.context_mode == "page-focused":
+            first = documents[0]
+            page = first.metadata.get("page")
+            if not isinstance(page, int):
+                raise ValueError("The first retrieved chunk has no PDF page metadata.")
+            context_documents = indexed_page_chunks(
+                stores[expected_filename],
+                {(source_basename(first.metadata.get("source")), page)},
                 args.max_context_chunks,
             )
         else:

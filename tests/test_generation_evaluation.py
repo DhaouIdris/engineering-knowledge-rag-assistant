@@ -106,6 +106,15 @@ def test_context_expansion_adds_companion_chunks_from_top_page_only():
     ]
 
 
+def test_context_expansion_never_exceeds_limit_with_full_initial_results():
+    ranked = [FakeDocument(f"result {index}", {"source": "report.pdf", "page": 1})
+              for index in range(5)]
+    store = FakeStore({str(index): document for index, document in enumerate(ranked)})
+    expanded = expand_with_same_page_chunks(ranked, store, top_pages=1,
+                                            max_documents=5)
+    assert expanded == ranked
+
+
 def test_context_expansion_prioritizes_the_highest_ranked_page():
     top = FakeDocument("top result", {"source": "report.pdf", "page": 9})
     lower = FakeDocument("lower result", {"source": "report.pdf", "page": 1})
