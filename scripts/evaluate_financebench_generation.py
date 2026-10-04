@@ -70,8 +70,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expand-top-pages", type=int, default=3)
     parser.add_argument("--max-context-chunks", type=int, default=20)
     parser.add_argument(
-        "--context-mode", choices=("retrieved", "page-focused", "oracle-page"), default="retrieved",
-        help="page-focused expands the first retrieved page; oracle-page supplies annotated benchmark pages for diagnosis.",
+        "--context-mode", choices=("retrieved", "page-focused", "page-neighbors", "oracle-page"), default="retrieved",
+        help="page-focused expands the first retrieved page; page-neighbors keeps its adjacent chunks; oracle-page uses annotated pages.",
     )
     parser.add_argument("--cache-dir", default="storage/financebench")
     parser.add_argument("--samples-per-type", type=int, default=10)
@@ -195,6 +195,28 @@ def indexed_page_chunks(store: Any, locations: set[tuple[str, int]],
     if not selected:
         raise ValueError("No indexed chunks on annotated evidence pages.")
     return selected
+
+
+def adjacent_page_chunks(store: Any, first: Any, limit: int) -> list[Any]:
+    """Keep the highest ranked chunk and its immediate indexed page neighbors.
+
+    This selection relies only on retrieval order and document metadata.
+    """
+    location = (source_basename(first.metadata.get("source")),
+                first.metadata.get("page"))
+    candidates = indexed_page_chunks(store, {location},
+                                      len(store.index_to_docstore_id))
+    key = str(first.page_content or "")
+    try:
+        center = next(i for i, doc in enumerate(candidates)
+                      if str(doc.page_content or "") == key)
+    except StopIteration as error:
+        raise ValueError("Retrieved chunk is missing from the indexed page.") from error
+    selected = [center]
+    for neighbor in (center - 1, center + 1):
+        if len(selected) < limit and 0 <= neighbor < len(candidates):
+            selected.append(neighbor)
+    return [candidates[i] for i in sorted(selected)]
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -368,6 +390,10 @@ def main() -> None:
                 stores[expected_filename],
                 {(source_basename(first.metadata.get("source")), page)},
                 args.max_context_chunks,
+            )
+        elif args.context_mode == "page-neighbors":
+            context_documents = adjacent_page_chunks(
+                stores[expected_filename], documents[0], args.max_context_chunks,
             )
         else:
             context_documents = expand_with_same_page_chunks(

@@ -432,6 +432,21 @@ versions could append one extra page companion when the first retrieved
 results already filled the limit; therefore a previous `--max-context-chunks 5`
 run may have included six chunks.
 
+If the complete page contains several unrelated tables, `page-neighbors`
+keeps the top retrieved chunk and up to two adjacent chunks from its page.
+This gives a table header and its row a chance to appear together without
+using benchmark evidence locations:
+
+```powershell
+python .\scripts\evaluate_financebench_generation.py `
+  --question-id financebench_id_00460 --context-mode page-neighbors `
+  --checkpoint evaluations/results/dev_00460_neighbors_checkpoint.jsonl `
+  --output evaluations/results/dev_00460_neighbors.json
+```
+
+This is one development diagnostic, not an optimized benchmark score. The
+evaluation still selects the annotated PDF before within-document retrieval.
+
 For a separate corpus-wide experiment, run all 150 questions and compare
 similarity search with MMR at three values of `k`:
 
