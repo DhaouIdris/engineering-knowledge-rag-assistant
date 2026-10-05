@@ -447,6 +447,18 @@ python .\scripts\evaluate_financebench_generation.py `
 This is one development diagnostic, not an optimized benchmark score. The
 evaluation still selects the annotated PDF before within-document retrieval.
 
+Observed on development question `financebench_id_00460`: similarity search
+retrieved the correct page. Its table explicitly labels fiscal 2024 and 2023,
+and the total store counts are 969 and 982. With the full page (8 chunks,
+5,132 prompt characters) and with the retrieved row plus its two neighbors
+(3 chunks, 2,675 prompt characters), `llama3.2` generated the same unsupported
+claim: "There was no change." The citation guard rejected both uncited answers.
+This isolates a generation failure for this case; a shorter context alone did
+not repair it. The experiment uses an annotated PDF for document selection and
+one previously inspected question, so it is neither a full-corpus score nor
+evidence that every financial-table question will fail. Further model changes
+should be compared on a fixed development set before a separate evaluation.
+
 For a separate corpus-wide experiment, run all 150 questions and compare
 similarity search with MMR at three values of `k`:
 
